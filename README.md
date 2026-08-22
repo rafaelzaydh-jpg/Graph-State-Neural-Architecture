@@ -1,2987 +1,3489 @@
-# Graph-State Neural Architecture
+**GRAPH-STATE  
+NEURAL ARCHITECTURE**
 
-## Uma arquitetura neural de microcore, grafo de capacidades, memória hierárquica, computação esparsa e parâmetros endereçáveis
+Da otimização de modelos existentes a uma arquitetura neural construída para capacidade endereçável
 
-**White Paper — Versão 0.2**  
-**Status:** Proposta arquitetural, hipótese científica e programa experimental
+**WHITE PAPER** Versão 0.3 — revisão RNC-128MB  
+**STATUS** Especificação arquitetural de convergência, decisões abertas e programa experimental  
+**BASE** Eyle 2.7.5 Rev4.2.3 • MiniMaxBrain 0.4.1 • GSNA v0.1 • GSNA v0.2
 
----
+**Tese central**
 
-## Resumo
+**Não construir um modelo gigante e depois otimizar para que ele caiba. Construir uma arquitetura em que inteligência residente, capacidade endereçável e computação ativa possam escalar separadamente.**
 
-Os modelos neurais modernos são normalmente construídos de forma que uma grande parcela de sua capacidade permaneça próxima ao mecanismo de computação durante a inferência. Mesmo em arquiteturas esparsas, a topologia de execução costuma ser relativamente fixa e o sistema ainda depende de uma quantidade significativa de parâmetros residentes em RAM ou VRAM.
+**Baseline desta revisão: RNCWeightBytes = 128 MB. É um ponto experimental, não um teto arquitetural.  
+**
 
-Essa organização cria uma relação forte entre:
+# Resumo
 
-- tamanho total do modelo;
-- memória física necessária;
-- quantidade de compute executada;
-- largura de banda exigida;
-- custo de treinamento;
-- custo de inferência.
+A Graph-State Neural Architecture (GSNA) nasce de uma sequência de tentativas de desacoplar capacidade lógica de custo físico.
 
-A **Graph-State Neural Architecture (GSNA)** propõe investigar uma relação diferente.
+O **Eyle** mostrou, em uma aplicação funcional, que memória persistente pode crescer sem que toda a memória seja automaticamente materializada no contexto. O **MiniMaxBrain (MMB)** estendeu o mesmo princípio aos parâmetros de modelos Mixture-of-Experts: um modelo pode possuir experts logicamente disponíveis sem manter todos os seus pesos simultaneamente residentes em RAM, desde que esses parâmetros sejam endereçáveis, verificáveis, pagináveis, reutilizáveis e protegidos durante a computação.
 
-Na GSNA, a inteligência não é representada primariamente como um único bloco monolítico de parâmetros. Ela é organizada como:
+Essas aplicações também expuseram o limite da otimização externa.
 
-```text
-Neural Microcore
-+
-Capability Graph
-+
-Capability Address Space
-+
-Memory Graph
-+
-Hierarchical Router
-+
-Residency Runtime
-```
+Depois de cache, I/O, paralelismo, leases, integridade, batching, prefetch e instrumentação, permanece uma restrição estrutural: o modelo original não foi treinado para viver sob esse regime físico. O runtime consegue materializar de forma mais eficiente aquilo que o modelo pede, mas não controla quais capacidades são pedidas, em que ordem, com que localidade ou com qual previsibilidade.
 
-O **Neural Microcore** é uma estrutura pequena e permanentemente residente. Ele mantém estado, produz representações, coordena roteamento, integra resultados, controla profundidade de computação e interage com memória.
+A GSNA ataca esse problema na origem:
 
-A maior parte da capacidade aprendida pode existir em um **Capability Graph** muito maior, composto por módulos neurais endereçáveis. Esses módulos podem residir em diferentes níveis da hierarquia física:
+**em vez de construir um modelo gigante e depois otimizar sua execução para caber no hardware, construir desde o início uma rede cuja capacidade, memória, computação ativa e residência física sejam recursos endereçáveis.**
 
-```text
-VRAM
-RAM
-SSD / NVMe
-HDD
-armazenamento remoto
-```
+A revisão v0.3 também corrige uma distorção introduzida durante a evolução da v0.2: o antigo **Resident Neural Core** não deve ser entendido como um hub obrigatório nem como um núcleo que precisa permanecer artificialmente pequeno.
 
-A cada operação, apenas uma pequena região do grafo precisa ser ativada e materializada próxima ao compute.
+A terminologia canônica passa a ser **Resident Neural Core (RNC)**.
 
-Consequentemente, a capacidade total do sistema pode ser muito maior que seu working set físico.
+O RNC é a parte neural que permanece residente e fornece inteligência basal, estado temporal, entrada/saída, suporte ao roteamento, integração e fallback. Seu tamanho é uma **dimensão independente de escala**. A GSNA não exige que o RNC permaneça constante quando o Capability Graph cresce e tampouco exige que cresça proporcionalmente a ele.
 
-A GSNA acrescenta uma hipótese ainda mais forte:
+A relação arquitetural desejada é:
 
-> **O modelo deve ser treinado desde o início para funcionar sob um orçamento físico limitado.**
+\|C\| ⟂arch \|Gₚ\|
 
-Memória disponível, largura de banda, latência, número de parâmetros ativos, quantidade de I/O e FLOPs podem participar do treinamento como restrições ou sinais de custo.
+onde:
 
-Assim, o objetivo não é simplesmente construir uma LLM que utilize menos RAM.
+- \(C\) representa o **Resident Neural Core**;
 
-O objetivo é investigar uma arquitetura em que:
+- (G_P) representa o **Parameter/Capability Graph**;
 
-\[
-SystemCapacity
-\gg
-ResidentCapacity
-\]
+- ⟂arch significa desacoplamento arquitetural, e não independência estatística: não existe uma regra estrutural que obrigue o tamanho de C a ser proporcional ao tamanho de Gₚ.
 
-enquanto:
+O primeiro baseline desta versão será um **RNC com orçamento de 128 MB de pesos residentes**. Esse valor é um ponto experimental, não um limite da arquitetura.
 
-\[
-Cost(operation)
-\approx
-Cost(active\ subgraph)
-\]
+O RNC contém um **Fast State Fabric**, uma sub-rede residente para transportar e atualizar estado causal de baixo volume. O estado neural pode seguir diretamente de uma capability para outra; não há requisito de retornar ao RNC entre cada transformação.
 
-e não:
+O **Capability Graph** contém transformações neurais endereçáveis e potencialmente não residentes. O **Memory Graph**, herdado conceitualmente do Eyle, contém conhecimento explícito, mutável, verificável e revisável. O **runtime GSNA**, apoiado nos mecanismos já demonstrados pelo MMB, é responsável por materialização física, cache, leases, integridade, telemetria e paging.
 
-\[
-Cost(operation)
-\approx
-Cost(total\ system)
-\]
+O objetivo da v0.3 não é declarar a arquitetura resolvida. É separar com precisão:
 
-Se essa hipótese for validada, computadores modestos poderão acessar sistemas neurais muito maiores do que sua memória local, enquanto servidores e clusters de grande porte poderão utilizar o mesmo princípio para operar capacidades lógicas muito superiores às que caberiam integralmente em memória de alta velocidade.
+1.  o que Eyle e MMB já responderam;
 
-O efeito potencial é alterar a relação entre **capacidade neural, hardware, custo e acessibilidade**.
+2.  o que a GSNA realmente precisa inventar;
 
----
+3.  quais decisões ainda bloqueiam um Graph Language Model funcional;
 
-# 1. O problema
+4.  quais testes podem falsificar ou fortalecer a hipótese;
 
-O crescimento de modelos neurais tem sido acompanhado por crescimento de:
+5.  como medir separadamente **Core Scaling** e **Capability Scaling**.
 
-```text
-parâmetros
-RAM
-VRAM
-bandwidth
-compute
-energia
-infraestrutura
-```
+A pergunta científica central passa a ser:
 
-Mesmo quando apenas parte dos parâmetros é ativada por token, grandes sistemas frequentemente continuam exigindo uma base residente substancial.
+**quanto de inteligência vale a pena manter residente, quanto pode existir como capacidade endereçável e como essas duas escalas interagem sob um orçamento físico real?**
 
-Isso produz dois limites.
+# 1. Tese do projeto
 
-## 1.1 Limite de acessibilidade
+A hipótese da GSNA não é simplesmente que Transformers sejam ineficientes.
 
-Um modelo pode existir publicamente e ainda ser impraticável para a maioria das máquinas.
+Transformers são extremamente eficientes quando avaliados dentro da premissa para a qual foram desenhados: uma topologia relativamente fixa, altamente vetorizável, com grande quantidade de parâmetros e estado próximos ao dispositivo de compute.
 
-Se o modelo exige dezenas ou centenas de GB de memória rápida, seu acesso fica restrito a:
+A hipótese da GSNA é outra:
 
-- servidores;
-- estações especializadas;
-- clusters;
-- GPUs de alto custo.
+**Para uma inteligência cuja capacidade total deva crescer muito além do working set físico disponível, uma topologia obrigatoriamente fixa pode ser a abstração errada.**
 
-## 1.2 Limite de escala dos grandes sistemas
+Em uma arquitetura tradicional, uma sequência atravessa uma pilha conhecida de operações. Mesmo quando existem experts esparsos, a organização macro permanece amplamente determinada pelas layers.
 
-O problema também existe no outro extremo.
+Na GSNA, a computação passa a ser descrita por:
 
-Uma organização que já possui centenas ou milhares de GPUs ainda precisa decidir:
+\[ \]
 
-> quanto da capacidade do modelo deve permanecer simultaneamente residente?
+A topologia executada deixa de ser completamente conhecida antes de observar o estado.
 
-Adicionar parâmetros normalmente exige adicionar memória, interconexão, compute ou ambos.
+O objetivo não é eliminar toda estrutura fixa. É limitar a estrutura fixa ao que precisa ser sempre residente e sempre confiável, permitindo que a maior parte da capacidade exista como um espaço endereçável.
 
-Portanto, a questão não é apenas:
+A hipótese pode ser resumida por seis desacoplamentos:
 
-> Como fazer modelos grandes caberem em computadores pequenos?
+**Memory size ≠ Context size.**
 
-A questão mais geral é:
+**Model size ≠ Resident model size.**
 
-> **Como permitir que a capacidade lógica de um sistema neural cresça muito mais rapidamente que seu working set físico?**
+**System capacity ≠ Active computation.**
 
----
+**Training state size ≠ Resident training state.**
 
-# 2. Hipótese central
+**Capability size ≠ Bandwidth per token.**
 
-A hipótese científica da GSNA é:
+**Graph size ≠ Path length.**
 
-> **Inteligência neural escalável não exige que toda capacidade aprendida esteja simultaneamente ativa, residente, presente no contexto ou envolvida em cada operação.**
+A sexta relação é explicitada nesta versão: aumentar o número total de capacidades não deve obrigar cada token a percorrer proporcionalmente mais nós.
 
-Formalmente, considere:
+# 2. Genealogia: como a GSNA surgiu
 
-\[
-\Theta_{total}
-\]
+## 2.1 Eyle — memória total não é contexto ativo
 
-como todos os parâmetros do sistema.
+O Eyle foi a primeira evidência operacional da ideia de endereçamento seletivo.
 
-A GSNA busca operar com:
+Seu Memory Graph mantém estado persistente com propriedades como:
 
-\[
-\Theta_{active}(t) \subset \Theta_{resident}(t) \subset \Theta_{total}
-\]
+- identidade;
 
-e idealmente:
+- scope;
 
-\[
-|\Theta_{active}(t)|
-\ll
-|\Theta_{resident}(t)|
-\ll
-|\Theta_{total}|
-\]
+- domain;
 
-A capacidade total pode crescer.
+- context identity;
 
-A atividade instantânea permanece pequena.
+- natureza epistemológica;
 
----
+- confiança;
 
-# 3. Princípios fundamentais
+- volatilidade;
 
-A GSNA é construída em torno das seguintes separações.
+- temporalidade;
 
-## 3.1 Capacidade total ≠ capacidade residente
+- relações;
 
-\[
-SystemCapacity
-\neq
-ResidentCapacity
-\]
+- proveniência;
 
-## 3.2 Parâmetros totais ≠ parâmetros ativos
+- revisão;
 
-\[
-|\Theta_{total}|
-\neq
-|\Theta_{active}|
-\]
+- freshness;
 
-## 3.3 Memória persistente ≠ contexto ativo
+- histórico de mudanças.
 
-\[
-|M_{total}|
-\neq
-|M_{active}|
-\]
+O ponto arquitetural mais importante não é a existência de uma base de memória.
 
-## 3.4 Histórico total ≠ estado neural imediato
+É a regra:
 
-O crescimento de experiência não deve exigir estado recorrente proporcionalmente maior.
+    graph growth
+        !=
+    automatic prompt growth
 
-## 3.5 Complexidade da tarefa ≠ profundidade fixa
+A implementação separa persistência de materialização. O contexto cognitivo é projetado sob budgets explícitos. Nós não materializados permanecem alcançáveis por identidade, recall ou ativação explícita.
 
-Tarefas diferentes podem consumir quantidades diferentes de compute.
+O Eyle também introduz uma separação útil entre semântica e mecânica. O Capability Registry expõe capacidades canônicas, seus contratos, efeitos, disponibilidade e executores, mas não se torna um segundo planejador semântico.
 
-## 3.6 Estado total de treinamento ≠ estado residente de treinamento
+Dessa experiência a GSNA herda três princípios:
 
-\[
-TrainingState_{total}
-\neq
-TrainingState_{resident}
-\]
+1.  **recursos podem ser numerosos sem estar todos presentes no estado ativo;**
 
-## 3.7 Capacidade total ≠ bytes transferidos por token
+2.  **endereçamento e materialização devem ser operações distintas;**
 
-\[
-CapabilitySize
-\neq
-BytesFetched/token
-\]
+3.  **o runtime deve possuir autoridade mecânica sem usurpar a decisão semântica.**
 
-## 3.8 Índice total ≠ índice residente
+## 2.2 MiniMaxBrain — modelo lógico não é modelo residente
 
-\[
-Index_{total}
-\neq
-Index_{resident}
-\]
+O MiniMaxBrain aplicou o mesmo raciocínio aos pesos neurais.
 
-O catálogo de capacidades também deve poder crescer sem permanecer integralmente em RAM.
+No caminho nativo, routed expert weights podem existir logicamente no grafo do modelo enquanto o payload completo permanece fora da memória física. O router neural continua sendo a autoridade sobre quais expert IDs são usados. O pager apenas materializa os bytes correspondentes.
 
-## 3.9 Capacidade lógica ≠ endereço físico
+O fluxo funcional é, de forma simplificada:
 
-\[
-CapabilityID
-\neq
-PhysicalAddress
-\]
+    llama.cpp / router neural
+            |
+            v
+    expert IDs
+            |
+            v
+    MMBPager
+            |
+            +-- cache hit -> lease/pin
+            |
+            +-- cache miss
+                    |
+                    +-- reserve
+                    +-- read
+                    +-- verify integrity
+                    +-- atomic commit
+                    +-- lease
+            |
+            v
+    GGML compute
+            |
+            v
+    release lease
 
-O modelo seleciona capacidades lógicas.
+O MMB estabeleceu mecanismos que não precisam ser reinventados pela GSNA:
 
-O runtime resolve onde seus parâmetros estão fisicamente.
+- parameter store;
 
----
+- metadata-only logical placeholders;
 
-# 4. Visão geral da arquitetura
+- pager;
 
-A GSNA pode ser representada como:
+- cache;
 
-```text
-                         INPUT
-                           │
-                           ▼
-                ┌────────────────────┐
-                │  NEURAL MICROCORE  │
-                │                    │
-                │ state              │
-                │ routing query      │
-                │ integration        │
-                │ stop/continue      │
-                │ resource policy    │
-                └─────────┬──────────┘
-                          │
-                    semantic query
-                          │
-                          ▼
-                ┌────────────────────┐
-                │ CAPABILITY ADDRESS │
-                │       SPACE        │
-                └─────────┬──────────┘
-                          │
-                    capability IDs
-                          │
-                          ▼
-                ┌────────────────────┐
-                │ CAPABILITY GRAPH   │
-                │                    │
-                │ node 17            │
-                │ node 812           │
-                │ node 9001          │
-                │ ...                │
-                └─────────┬──────────┘
-                          │
-                    required pages
-                          │
-                          ▼
-                ┌────────────────────┐
-                │ RESIDENCY RUNTIME  │
-                │ cache / pager      │
-                │ prefetch / leases  │
-                └─────────┬──────────┘
-                          │
-             ┌────────────┼────────────┐
-             ▼            ▼            ▼
-           VRAM          RAM         STORAGE
-                                        │
-                                        ▼
-                                 GB / TB / beyond
-```
+- leases;
 
-Separadamente:
+- eviction safety;
 
-```text
-Neural Microcore
-       │
-       ▼
-Memory Controller
-       │
-       ▼
-Memory Graph
-```
+- atomic batch commit;
 
-Parâmetros e memória persistente são recursos diferentes.
+- integrity verification;
 
----
+- fail-closed behavior;
 
-# 5. Neural Microcore
+- native telemetry;
 
-O **Neural Microcore** é o núcleo sempre residente da arquitetura.
+- separation between router authority and materialization;
 
-Ele não deve conter toda a capacidade do sistema.
+- measurement of cache hits, misses, bytes fetched, I/O wait and critical path.
 
-Sua função principal é coordenar.
+O MiniMaxBrain também mostrou o limite da otimização de uma arquitetura que não foi treinada para paging.
 
-## 5.1 Responsabilidades
+No benchmark A2 incluído no pacote, a execução warm do candidato aumentou a mediana de aproximadamente **0,49 tok/s para 1,06 tok/s** em relação ao baseline, mantendo o mesmo output medido. Porém, o paging ainda representava aproximadamente **68%** do tempo de decode medido no candidato. A otimização melhorou muito a execução, mas não mudou o padrão de acesso produzido pelo modelo.
 
-O microcore pode conter:
+Esse resultado é uma das motivações mais fortes da GSNA:
 
-- representação do estado atual;
-- mecanismo recorrente ou state-space;
+**o runtime pode tornar um padrão de acesso menos ruim; somente o treinamento pode ensinar o modelo a produzir um padrão de acesso diferente.**
+
+## 2.3 GSNA v0.1 — computação como caminho dinâmico
+
+O whitepaper v0.1 generalizou os dois princípios anteriores.
+
+Em vez de:
+
+    Layer 1
+      |
+    Layer 2
+      |
+    Layer 3
+      |
+    ...
+      |
+    Layer N
+
+a proposta passou a ser:
+
+    Node A
+     /   \
+    B     C
+     \   /
+       D
+       |
+      E/F
+
+Cada operação percorre apenas uma região do grafo.
+
+Formalmente:
+
+\[ h\_{k+1}=f\_{v_k}(h_k;\_{v_k}) \]
+
+e:
+
+\[ V\_{k+1}^{active}=R(h_k,S_k,G) \]
+
+A contribuição central da v0.1 foi, portanto:
+
+**a própria organização da computação pode ser endereçável.**
+
+## 2.4 GSNA v0.2 — treinamento sob orçamento físico e uma correção necessária
+
+A versão 0.2 tornou explícitas quatro ideias importantes:
+
+- Neural Microcore;
+
+- Capability Fabric;
+
+- Budget-Constrained Neural Training;
+
+- Sparse Training State.
+
+Ela também elevou métricas físicas, especialmente BytesFetched/token, ao centro do problema e propôs que o modelo aprenda localidade, prefetch, residency e uso de compute.
+
+Entretanto, a depuração conceitual da v0.2 introduziu duas conclusões que não pertenciam à essência da proposta original:
+
+1.  o RNC passou a poder ser interpretado como um **hub obrigatório** pelo qual toda transformação deveria retornar;
+
+2.  “manter o RNC pequeno” passou a aparecer quase como um objetivo arquitetural.
+
+A v0.3 corrige explicitamente as duas interpretações.
+
+O RNC é residente, mas não é um hub obrigatório.
+
+E o RNC pode crescer quando isso melhora qualidade, roteamento, integração ou capacidade basal. O que a GSNA exige é **desacoplamento**, não miniaturização.
+
+Em outras palavras:
+
+\[ \]
+
+e também:
+
+\[ \]
+
+A escala correta do RNC deve ser descoberta experimentalmente.
+
+# 3. O que já está respondido
+
+A GSNA não deve reabrir problemas que já possuem resposta operacional nas aplicações predecessoras.
+
+## 3.1 Memória persistente e projeção seletiva
+
+**Respondido principalmente pelo Eyle.**
+
+A GSNA pode reutilizar os seguintes conceitos:
+
+- identidade persistente;
+
+- relações explícitas;
+
+- revisão;
+
+- proveniência;
+
+- temporalidade;
+
+- freshness;
+
+- alcance;
+
+- materialização sob budget;
+
+- separação entre memória persistida e memória ativa.
+
+A pesquisa GSNA não precisa provar novamente que um grafo de memória pode crescer sem entrar integralmente no contexto.
+
+O problema novo é definir **como estado neural consulta e recebe resultados desse grafo sem converter todo recall em texto de prompt**.
+
+## 3.2 Registry e contratos de capacidades
+
+**Respondido parcialmente pelo Eyle.**
+
+A noção de capacidade endereçável com identidade canônica, input contract, output contract, availability, effect e provider ownership já possui implementação concreta.
+
+A GSNA deve adaptar esse princípio para nós neurais.
+
+Um Capability Node precisa possuir, no mínimo:
+
+    node_id
+    node_type
+    state_contract
+    parameter_contract
+    routing_key
+    dependencies
+    residency_state
+    version
+    integrity_metadata
+    physical_tier
+
+O registry continua sendo infraestrutura mecânica.
+
+A semântica de qual capacidade utilizar pertence ao roteamento aprendido.
+
+## 3.3 Paging e residência de parâmetros
+
+**Respondido em grande parte pelo MiniMaxBrain.**
+
+A GSNA deve herdar, salvo evidência contrária:
+
+- parameter store;
+
+- page metadata;
+
+- checksums;
+
+- versioning;
+
+- cache;
+
+- LRU ou política substituível;
+
+- leases;
+
+- pin durante compute;
+
+- atomic load/commit;
+
+- explicit failure;
+
+- no silent fallback;
+
+- métricas de paging;
+
+- bundle verification.
+
+O problema novo não é como ler uma página do SSD.
+
+O problema novo é:
+
+**como treinar trajetórias que necessitem de poucas páginas, reutilizem páginas carregadas e sejam previsíveis o suficiente para prefetch.**
+
+## 3.4 Autoridade do router
+
+**Respondido como invariante pelo MiniMaxBrain.**
+
+No MMB, o pager não escolhe experts. O router neural é a autoridade semântica e o runtime é a autoridade física.
+
+A mesma separação deve valer para a GSNA:
+
+    Neural policy
+        |
+        | escolhe intenção computacional
+        v
+    node IDs / route distribution
+        |
+        v
+    Runtime
+        |
+        | decide materialização física válida
+        v
+    resident pages / execution
+
+O runtime pode recusar uma rota impossível sob hard constraints, mas não deve silenciosamente substituir uma capacidade por outra semanticamente diferente.
+
+## 3.5 Integridade, telemetria e verdade física
+
+**Respondido principalmente pelo MiniMaxBrain.**
+
+A GSNA deve nascer instrumentada.
+
+Métricas ausentes não podem ser fabricadas como zero. Service time não deve ser confundido com wall time. Comparações precisam usar janelas temporais coerentes. Toda otimização deve ser selecionada a partir do caminho crítico real.
+
+Esse princípio é parte da arquitetura de pesquisa, não somente engenharia de benchmark.
+
+# 4. Resident Neural Core (RNC)
+
+A v0.3 substitui o termo **Resident Neural Core** por **Resident Neural Core (RNC)**.
+
+A mudança não é cosmética.
+
+“Microcore” carregava uma conclusão prematura: a de que o núcleo deveria ser o menor possível. A propriedade realmente necessária é outra:
+
+**o núcleo deve ser residente, confiável e útil; seu tamanho deve ser escolhido pela melhor relação entre qualidade e custo, não por uma obrigação de permanecer pequeno.**
+
+A representação de alto nível passa a ser:
+
+\[ System_t=(C,F,G_P,G_M,H_t,R_t,B_t) \]
+
+onde:
+
+- (C): **Resident Neural Core (RNC)** — a capacidade neural sempre residente;
+
+- (F): **Fast State Fabric** — sub-rede residente, logicamente pertencente ao RNC, responsável por transporte e atualização rápida de estado;
+
+- (G_P): **Parameter/Capability Graph** — grafo de capacidades neurais endereçáveis;
+
+- (G_M): **Memory Graph** — memória explícita, persistente, revisável e endereçável;
+
+- (H_t): **Fast Temporal State** — estado causal necessário para processar o token (t);
+
+- (R_t): estado de roteamento, residência e cache relevante para a decisão corrente;
+
+- (B_t): **orçamento físico** disponível no instante (t), como RAM/VRAM disponível, bandwidth, compute e limites de I/O.
+
+O Fast State Fabric é mostrado separadamente porque possui um contrato específico, mas fisicamente pode fazer parte do mesmo checkpoint residente do RNC:
+
+\[ F C \]
+
+A arquitetura desejada é:
+
+                             GSNA
+                              |
+                    Resident Neural Core
+              +---------------+----------------+
+              |               |                |
+         basal neural     Fast State       routing /
+          capacity          Fabric         integration
+              |               |
+              |               +-----------------------------+
+              |                                             |
+              v                                             v
+          State Packet --------------------------> Capability Graph
+                                                      /   |   \
+                                                     /    |    \
+                                                    v     v     v
+                                                  Node -> Node -> Node
+                                                    \           /
+                                                     \         /
+                                                      +-------+
+                                                          |
+                                                          v
+                                                    state commit
+                                                          |
+                                              +-----------+-----------+
+                                              |                       |
+                                              v                       v
+                                          LM Head               Memory Gateway
+                                                                      |
+                                                                      v
+                                                                 Memory Graph
+
+Não existe a regra:
+
+    Capability -> RNC -> Capability -> RNC -> Capability
+
+Uma capability pode encaminhar estado diretamente para outra capability quando a topologia e a política de routing permitirem.
+
+O RNC fornece substrato residente, estado e coordenação. Ele não precisa ser o gargalo de toda comunicação.
+
+## 4.1 Baseline RNC-128MB
+
+A primeira implementação será denominada **RNC-128MB**.
+
+Nesta versão, “128 MB” significa:
+
+\[ B\_{RNC,w}=128  \]
+
+onde (B\_{RNC,w}) é o **budget de bytes dedicado aos pesos residentes do RNC**.
+
+Esse número não significa “128 milhões de parâmetros”.
+
+A quantidade de parâmetros que cabe nesse budget depende da representação numérica. Ignorando pequenos overheads de metadata:
+
+| **Representação dos pesos** | **Bytes aproximados por parâmetro** | **Parâmetros que cabem em ~128 MB** |
+|-----------------------------|-------------------------------------|-------------------------------------|
+| FP32                        | 4                                   | ~32M                                |
+| BF16 / FP16                 | 2                                   | ~64M                                |
+| INT8                        | 1                                   | ~128M                               |
+| 4-bit                       | 0,5                                 | ~256M                               |
+
+Esses números são apenas equivalências de armazenamento. Eles **não** dizem que todas as precisões possuem a mesma qualidade, throughput ou custo de treinamento.
+
+Para evitar métricas enganosas, a GSNA deve reportar separadamente:
+
+\[ RNCWeightBytes \]
+
+bytes dos pesos do RNC;
+
+\[ RNCStateBytes \]
+
+bytes do estado temporal e de roteamento;
+
+\[ RNCActivationBytes \]
+
+ativações temporárias relevantes;
+
+\[ RNCRuntimeBytes \]
+
+buffers e estruturas do runtime residentes por causa do RNC.
+
+A memória residente total atribuível ao RNC é, portanto:
+
+\[ RNCTotalResidentBytes = RNCWeightBytes + RNCStateBytes + RNCActivationBytes + RNCRuntimeBytes \]
+
+O baseline “128 MB” fixa inicialmente apenas RNCWeightBytes.
+
+Além disso, benchmarks devem registrar se “MB” é decimal ou se o runtime reporta “MiB” binário, para evitar comparar números diferentes sob o mesmo rótulo.
+
+## 4.2 O RNC de 128 MB não é um teto
+
+A escolha de 128 MB é uma âncora experimental.
+
+Ela não estabelece:
+
+\|C\| ≤ 128 MB
+
+como princípio da GSNA.
+
+A hipótese é que um RNC maior provavelmente pode melhorar qualidade. Isso não é um problema; é uma dimensão de scaling que precisa ser medida.
+
+A pergunta correta é:
+
+**qual aumento de qualidade recebemos para cada byte adicional mantido permanentemente residente?**
+
+## 4.3 Core Scaling e Capability Scaling são eixos diferentes
+
+A GSNA deve medir dois tipos de escala.
+
+### Core Scaling
+
+Aumentar (C), o RNC:
+
+    64 MB
+      |
+    128 MB
+      |
+    256 MB
+      |
+    512 MB
+      |
+    1 GB
+
+tende a aumentar capacidade basal, qualidade de estado, routing e integração, mas cobra memória e compute residentes.
+
+### Capability Scaling
+
+Aumentar (G_P), o Capability Graph:
+
+    1x
+     |
+    2x
+     |
+    4x
+     |
+    8x
+     |
+    16x
+
+aumenta capacidade potencial sem exigir que toda essa capacidade permaneça residente ou ativa.
+
+Os eixos são arquiteturalmente desacoplados:
+
+\|C\| ⟂arch \|Gₚ\|
+
+O símbolo ⟂arch significa:
+
+**o design não impõe proporcionalidade obrigatória entre os dois tamanhos.**
+
+Ele não significa independência estatística.
+
+Na prática, pode existir uma interação:
+
+G_usable = f(C)
+
+onde G_usable é a parte do Capability Graph que o RNC consegue navegar e utilizar com qualidade suficiente.
+
+Essa função precisa ser descoberta experimentalmente.
+
+## 4.4 Core sizing como problema de otimização
+
+O tamanho do RNC deve ser escolhido como função de requisitos de implantação:
+
+\[ C=C(B,Q,L) \]
+
+onde:
+
+- \(B\) = **orçamento físico**: RAM/VRAM, compute disponível, bandwidth, energia ou limites de I/O;
+
+- \(Q\) = **qualidade desejada**: nível de loss/perplexidade, capacidade de reasoning, coding, factuality ou outra meta;
+
+- \(L\) = **restrição de latência**: tempo máximo aceitável para prefill, decode, resposta ou uma operação completa.
+
+A equação não define ainda uma função fechada. Ela expressa o problema:
+
+para um hardware e uma meta de qualidade/latência, existe um tamanho de RNC mais vantajoso do que outros.
+
+Em uma máquina de 8 GB, o RNC-128MB deve deixar amplo espaço para sistema operacional, Fast State, cache de capabilities, buffers e outros componentes. Em máquinas maiores, um RNC maior pode ser racional.
+
+A GSNA deve adaptar-se ao hardware; não deve sacrificar sua arquitetura para perseguir o menor footprint imaginável.
+
+## 4.5 Funções mínimas do RNC
+
+O RNC deve conter somente funções cuja residência frequente tenha valor suficiente para justificar seu custo.
+
+Candidatas:
+
+- token embedding e representação de entrada;
+
 - capacidade linguística basal;
-- geração de routing queries;
-- integração de módulos;
-- controlador de parada;
-- predição de próximos recursos;
-- controlador de memória;
-- representação abstrata do orçamento físico.
 
-## 5.2 Objetivo de tamanho
+- Fast State Fabric;
 
-A hipótese de longo prazo é manter o microcore pequeno mesmo quando o Capability Graph cresce.
+- estado temporal causal;
 
-Idealmente:
+- suporte a routing local e global;
 
-\[
-|Core|
-\approx
-constante
-\]
+- integração de resultados;
 
-enquanto:
+- fallback quando uma capability externa não está disponível;
 
-\[
-|CapabilityGraph|
-\rightarrow
-grande
-\]
+- stop/continue;
 
-Uma meta experimental futura poderia investigar regimes como:
+- prefetch hints;
 
-```text
-microcore:             centenas de MiB
-working cache:         centenas de MiB
-total active footprint ~1 GiB
-```
+- LM head ou projeção compartilhada, se isso for vantajoso.
 
-enquanto o Capability Graph possui:
+A lista não significa que cada função precise ser implementada como um módulo isolado.
 
-```text
-10 GB
-100 GB
-2 TB
-20 TB
-```
+O objetivo é que o RNC continue sendo uma **rede neural útil por si mesma**, enquanto o Capability Graph adiciona capacidade especializada e escalável.
 
-Esses valores são metas de pesquisa, não garantias.
+## 4.6 RNC como fallback funcional
 
----
+Uma propriedade desejável é:
 
-# 6. Como um microcore pequeno encontra capacidades enormes
+Output(C) permanece válido quando Gₚ_available é reduzido
 
-Um microcore pequeno não pode memorizar diretamente a localização de milhões ou bilhões de módulos.
+Isso não exige que o RNC iguale a qualidade do sistema completo.
 
-A solução é separar:
+Exige degradação graciosa:
 
-```text
-saber a informação
-```
+    RNC only
+       -> linguagem basal
 
-de:
+    RNC + small resident graph
+       -> melhor qualidade
 
-```text
-saber navegar até a informação
-```
+    RNC + large capability graph
+       -> capacidade ampliada
 
-O microcore produz uma **routing query**:
+Essa propriedade reduz acoplamento operacional e permite testar separadamente a contribuição real do Capability Graph.
 
-\[
-q_k = Q(h_k)
-\]
+# 5. State Packet: o que realmente circula
 
-Essa query representa a necessidade atual.
+Um token ID não deve ser imaginado literalmente viajando pelo grafo.
 
-Exemplo conceitual:
+O que circula é uma representação neural associada ao token e ao estado causal disponível.
 
-```text
-"preciso de capacidade relacionada a
- álgebra simbólica e resolução de equações"
-```
+A v0.3 denomina essa unidade lógica de **State Packet**.
 
-A query não precisa ser texto.
+Uma forma abstrata:
 
-Normalmente seria uma representação neural compacta.
+\[ P\_{t,k}=(h\_{t,k},q\_{t,k},b\_{t,k},\_{t,k}) \]
 
-Essa query é usada para navegar por um espaço externo de capacidades.
+onde:
 
----
+- (h\_{t,k}): estado neural;
 
-# 7. Capability Address Space
+- (q\_{t,k}): estado mínimo de rota;
 
-A GSNA introduz um **Capability Address Space**.
+- (b\_{t,k}): budget restante;
 
-Seu papel é mapear necessidades semânticas para capacidades lógicas.
+- (\_{t,k}): referências físicas/lógicas necessárias ao runtime.
 
-```text
-state
-  │
-  ▼
-routing query
-  │
-  ▼
-Capability Address Space
-  │
-  ▼
-Capability IDs
-```
-
-Uma capacidade pode possuir:
-
-```text
-capability_id
-routing_key
-node_type
-input_contract
-output_contract
-version
-dependencies
-cost_profile
-residency_metadata
-```
-
-A localização física não precisa fazer parte da representação neural.
-
----
-
-# 8. Endereço lógico e endereço físico
-
-A separação é:
-
-```text
-Neural layer:
-"quero capability 0x02:A71:184"
-
-Runtime:
-"está no SSD 2, shard 18, offset X"
-
-ou:
-"já está no RAM cache"
-
-ou:
-"já está em VRAM"
-```
-
-Portanto:
+Isso não significa que todos esses campos precisem existir como um objeto material em cada kernel. É um contrato lógico.
 
-\[
-LogicalCapability
-\rightarrow
-RuntimeResolution
-\rightarrow
-PhysicalLocation
-\]
+A propriedade central é que a carga de comunicação entre capabilities seja pequena em comparação com a carga dos parâmetros.
 
-Isso permite mover, compactar, replicar ou redistribuir parâmetros sem alterar a identidade neural da capacidade.
+Se um estado tiver dimensão 1024 em BF16, o vetor principal possui aproximadamente 2 KiB. Uma página neural pode possuir dezenas de MiB.
 
----
+Essa assimetria é proposital:
 
-# 9. Índice hierárquico
+**mover estado deve ser barato; mover capacidade deve ser raro e reutilizável.**
 
-Se existirem milhões ou bilhões de nodes, não é viável comparar uma query contra todos eles.
+# 6. Fast State Fabric
 
-A GSNA propõe roteamento hierárquico.
+A v0.3 introduz explicitamente o **Fast State Fabric (FSF)**.
 
-```text
-query
- │
- ▼
-root
- │
- ├── language
- ├── math
- ├── code
- ├── planning
- └── multimodal
-       │
-       ▼
-   cluster
-       │
-       ▼
-  subcluster
-       │
-       ▼
- local candidates
-       │
-       ▼
- capability IDs
-```
+O FSF é a sub-rede residente responsável por comunicação neural rápida e causal. Ele pertence logicamente ao RNC:
 
-Formalmente:
+\[ F C \]
 
-\[
-c_1 = R_0(q)
-\]
+mas é separado conceitualmente porque sua função é diferente da capacidade basal do núcleo.
 
-\[
-c_2 = R_1(q,c_1)
-\]
+O FSF não existe para armazenar a maior parte da inteligência.
 
-\[
-...
-\]
+Ele existe para transportar e atualizar um estado compacto o suficiente para que:
 
-\[
-v = R_n(q,c_1,\ldots,c_n)
-\]
+- o token atual receba informação causal do passado;
 
-A busca deixa de depender linearmente do número total de módulos.
+- capability nodes recebam um contexto neural útil;
 
----
+- resultados de capabilities sejam integrados ao fluxo temporal;
 
-# 10. O próprio índice pode ser paginado
+- um node possa encaminhar estado diretamente a outro;
 
-Um índice enorme também consome memória.
+- o roteamento possa reagir ao estado sem materializar todo o histórico;
 
-Portanto:
-
-```text
-microcore
-   ↓
-resident root
-   ↓
-paged index region
-   ↓
-paged sub-index
-   ↓
-capability
-```
-
-Assim:
-
-\[
-Index_{resident}
-\ll
-Index_{total}
-\]
-
-O princípio de working set aplica-se recursivamente.
-
-A inteligência mantém perto do compute apenas as regiões do índice necessárias para navegar pelo estado atual.
-
----
-
-# 11. Capability Graph
-
-O **Capability Graph** representa a capacidade aprendida do sistema.
-
-Formalmente:
-
-\[
-G_C=(V,E)
-\]
-
-Cada vértice \(v_i\) pode possuir parâmetros:
-
-\[
-\theta_i
-\]
-
-e executar:
-
-\[
-h' = f_i(h;\theta_i)
-\]
-
-As arestas podem representar:
-
-- compatibilidade;
-- dependência;
-- provável sequência;
-- especialização;
-- composição;
-- relações de routing.
-
-O grafo não precisa ser uma sequência fixa de layers.
-
----
-
-# 12. A computação como trajetória
-
-Uma operação pode percorrer:
-
-```text
-17 → 81 → 92 → 140
-```
-
-Outra:
-
-```text
-17 → 403 → 92 → 9001 → 722 → 140
-```
-
-O número de passos também pode variar.
-
-A trajetória é determinada pelo estado, pelo objetivo e pelo orçamento disponível.
-
----
-
-# 13. Capability Nodes
-
-Capability Nodes representam módulos neurais especializados.
-
-Eles podem aprender funções como:
-
-- linguagem;
-- matemática;
-- código;
-- planejamento;
-- abstração;
-- percepção;
-- domínio científico;
-- manipulação simbólica;
-- ferramentas;
-- multimodalidade.
-
-Essas categorias não precisam ser fixadas manualmente.
-
-Especialização pode emergir do treinamento.
-
----
-
-# 14. Transformações residuais
-
-Uma forma desejável de node é:
-
-\[
-h_{out}
-=
-h_{in}
-+
-\Delta_i(h_{in};\theta_i)
-\]
-
-Isso permite que o microcore mantenha uma baseline funcional.
-
-Módulos adicionam capacidade incremental.
-
-Vantagens potenciais:
-
-- degradação graciosa;
-- atualização modular;
-- especialização;
-- continual learning;
-- menor interferência global;
-- expansão incremental.
-
----
-
-# 15. Tipos de nodes
-
-Uma primeira taxonomia inclui:
-
-## 15.1 Compute Nodes
-
-Transformações neurais gerais.
-
-## 15.2 Capability Nodes
-
-Especializações maiores.
-
-## 15.3 Router Nodes
-
-Selecionam regiões do espaço de capacidades.
-
-## 15.4 Integration Nodes
-
-Combinam múltiplos resultados.
-
-## 15.5 Neural Memory Nodes
-
-Mantêm representações persistentes ou semipersistentes.
-
-## 15.6 Epistemic Memory Nodes
-
-Representam conhecimento explícito e revisável.
-
----
-
-# 16. Memory Graph
-
-O Memory Graph é separado do Capability Graph.
-
-Ele representa experiência e conhecimento mutável.
-
-Pode conter:
-
-```text
-identity
-statement
-confidence
-scope
-temporal validity
-provenance
-relations
-revision
-freshness
-```
-
-Isso permite distinguir:
-
-```text
-capacidade aprendida
-```
-
-de:
-
-```text
-conhecimento mutável
-```
-
-O objetivo é evitar que fatos transitórios precisem ser permanentemente incorporados aos pesos.
-
----
-
-# 17. Três escalas de estado e memória
-
-A GSNA distingue:
-
-## Fast State
-
-\[
-H_t
-\]
-
-Estado imediato.
-
-## Neural Memory
-
-\[
-N_t
-\]
-
-Representações persistentes aprendidas.
-
-## Epistemic Memory
-
-\[
-M_t
-\]
-
-Conhecimento explícito e revisável.
-
-O estado cognitivo pode ser representado como:
-
-\[
-S_t=(H_t,N_t,M_t)
-\]
-
----
-
-# 18. Parameter Paging como parte da arquitetura
-
-Quando uma capacidade selecionada não está residente:
-
-```text
-Capability ID
-     │
-     ▼
-Residency Manager
-     │
- ┌───┴───────────┐
- │               │
-resident     non-resident
- │               │
- ▼               ▼
-compute       Parameter Store
-                   │
-                   ▼
-                 cache
-                   │
-                   ▼
-                compute
-```
-
-Paging não é um fallback.
-
-É uma propriedade prevista pela arquitetura.
-
----
-
-# 19. Hierarquia física
-
-Os parâmetros podem existir em múltiplos níveis:
-
-```text
-                 COMPUTE
-                    ▲
-                    │
-                  VRAM
-                    ▲
-                    │
-                 RAM cache
-                    ▲
-                    │
-                SSD / NVMe
-                    ▲
-                    │
-                   HDD
-                    ▲
-                    │
-            armazenamento remoto
-```
-
-O runtime decide:
-
-- o que promover;
-- o que manter;
-- o que evictar;
-- o que prefetchar;
-- o que replicar.
-
----
-
-# 20. Residency como working set
-
-A cada instante:
-
-\[
-W_t \subset \Theta_{total}
-\]
-
-onde \(W_t\) representa os parâmetros residentes.
-
-A meta é:
-
-\[
-|W_t|
-\ll
-|\Theta_{total}|
-\]
-
-sem comprometer excessivamente qualidade ou latência.
-
-O tamanho total do Capability Graph deixa de ser equivalente à memória física necessária.
-
----
-
-# 21. Predictive Prefetch
-
-O sistema pode prever futuras trajetórias:
-
-\[
-P(v_{k+1},v_{k+2},...,v_{k+n}\mid h_k)
-\]
-
-Isso significa:
-
-> dado o estado atual, quais caminhos futuros parecem mais prováveis?
-
-Exemplo:
-
-```text
-compute node 81
-      │
-      ├── prefetch node 92
-      ├── prefetch node 140
-      └── manter node 318 em baixa prioridade
-```
-
-A predição não substitui o routing real.
-
-Ela apenas prepara o runtime.
-
-```text
-prediction
-≠
-execution decision
-```
-
----
-
-# 22. Prefetch como tarefa aprendida
-
-Durante treinamento, a trajetória real é conhecida.
-
-Se:
-
-```text
-predito:
-81 → 92 → 140 → 318
-
-real:
-81 → 92 → 140 → 722
-```
-
-o sistema pode receber uma loss específica.
+- a maior parte do Capability Graph permaneça fora do working set.
 
 Conceitualmente:
 
-\[
-L_{prefetch}
-=
--\sum_j
-\log P(v_{k+j}^{real}|h_k)
-\]
+    token embedding
+          |
+          v
+    Fast State Fabric <--------------------------------------+
+          |                                                  |
+          v                                                  |
+    State Packet                                             |
+          |                                                  |
+          +--> Capability A --> Capability B --> Node C -----+
+          |                           |
+          |                           +--> Node D
+          |
+          +--> Memory Gateway
+          |
+          v
+    Integration / Commit
+          |
+          v
+    Fast Temporal State
+          |
+          v
+    LM Head
 
-Assim o modelo aprende não apenas a computar.
+A linha Capability A -\> Capability B é importante: o estado não precisa retornar a um hub central entre cada transição.
 
-Ele aprende a tornar seu próprio caminho previsível.
+## 6.1 Requisito temporal
 
----
+Para modelagem autoregressiva:
 
-# 23. Localidade como propriedade aprendida
+\[ P(x\_{t+1}\|x\_{t}) \]
 
-Duas trajetórias podem possuir qualidade semelhante:
+o FSF precisa garantir causalidade estrita.
 
-```text
-Trajectory A
-quality = 0.95
-100 MB transferidos
+Um ciclo abstrato é:
 
-Trajectory B
-quality = 0.95
-2 GB transferidos
-```
+\[ u\_{t,0}=F\_{in}(e_t,H\_{t-1}) \]
 
-A arquitetura deve preferir A.
+\[ u\_{t,k+1}=u\_{t,k}+*{v_k}(u*{t,k}) \]
 
-Portanto, localidade deixa de ser apenas otimização de runtime.
+\[ H_t=F\_{commit}(H\_{t-1},u\_{t,K}) \]
 
-Ela participa do treinamento.
+\[ logits_t=W\_{vocab}N(u\_{t,K}) \]
 
----
+onde:
 
-# 24. A métrica física central: bytes por operação
+- (e_t) é o embedding do token atual;
 
-Ativar poucos parâmetros não garante eficiência.
+- (H\_{t-1}) é o estado temporal disponível antes do token atual;
 
-Um modelo pode ser extremamente esparso e ainda ler grandes volumes do SSD.
+- (u\_{t,k}) é o State Packet após (k) passos no Capability Graph;
 
-Por isso:
+- (v_k) é o node executado no passo (k);
 
-\[
-\boxed{BytesFetched/token}
-\]
+- (\_{v_k}) é a transformação residual daquele node;
 
-é uma métrica de primeira classe.
+- (F\_{commit}) decide como o resultado final altera o estado temporal;
 
-Também devem ser medidos:
+- \(N\) representa a normalização final antes da projeção para o vocabulário.
 
-```text
-blocking_bytes/token
-prefetched_bytes/token
-wasted_prefetch_bytes/token
-cache_hits
-cache_misses
-page_faults
-reuse_distance
-```
+Essa formulação deixa claro que o Capability Graph e o mecanismo temporal são problemas diferentes.
 
-A meta é:
+## 6.2 Requisito de treinamento
 
-> **mover pouco dado para produzir muito trabalho útil.**
+O mecanismo escolhido para (F) precisa oferecer estratégia de treinamento paralelizável ou suficientemente eficiente.
 
----
+Candidatos para benchmark:
 
-# 25. Computação adaptativa
+- SSM causal;
 
-A profundidade não precisa ser fixa.
+- recorrência moderna com scan paralelo;
 
-Após cada transição:
+- linear attention;
 
-\[
-P(stop|h_k)
-\]
+- Transformer causal local/compacto;
 
-pode ser estimado.
+- arquitetura híbrida;
 
-Quando:
+- mecanismo próprio da GSNA.
 
-\[
-P(stop|h_k)>\tau
-\]
+A escolha não deve ser feita por preferência teórica.
 
-a operação pode encerrar.
+Cada candidato deve ser comparado por:
 
-Exemplo:
+- validation loss;
 
-```text
-tarefa simples
-   ↓
-3 passos
-   ↓
-output
-```
+- throughput de treino;
 
-versus:
+- FLOPs/token;
 
-```text
-tarefa complexa
-   ↓
-30 passos
-   ↓
-output
-```
+- bytes de estado por sequência;
 
-O mesmo sistema pode operar em:
+- latência de decode;
 
-```text
-low-compute
-balanced
-deep-compute
-```
+- estabilidade de gradiente;
 
----
+- capacidade de receber commits do Capability Graph;
 
-# 26. Budget-Constrained Neural Training
+- qualidade quando o Capability Graph está desativado;
 
-A GSNA propõe que o treinamento conheça limites físicos.
+- qualidade de routing produzido a partir de seu estado.
 
-Em vez de apenas:
+## 6.3 Hipótese de implementação inicial
 
-\[
-\min L_{quality}
-\]
+Para reduzir risco no primeiro protótipo, a arquitetura inicial do FSF deve priorizar:
 
-temos qualidade sob restrições:
+1.  causalidade simples de verificar;
 
-\[
-ResidentBytes \le B
-\]
+2.  estado de inferência limitado;
 
-\[
-ActiveParameters/token \le A
-\]
+3.  operações altamente batchable;
 
-\[
-IOBytes/token \le I
-\]
+4.  shape estável para todos os Capability Nodes;
 
-\[
-FLOPs/token \le F
-\]
+5.  possibilidade de substituir o mecanismo temporal sem reescrever o runtime do grafo.
 
-\[
-Latency \le T
-\]
+O primeiro benchmark deve tratar o FSF como interface, não como dogma arquitetural.
 
-O orçamento torna-se parte do problema de aprendizado.
+Um contrato possível:
 
----
+    TemporalState -> FSF.read(token_embedding) -> StatePacket
+    StatePacket   -> Capability Graph          -> StatePacket'
+    StatePacket'  -> FSF.commit(...)           -> TemporalState'
 
-# 27. Função objetivo
+Se essa interface permanecer estável, SSM, recorrência, atenção local ou outro mecanismo podem ser testados mantendo o restante da GSNA constante.
 
-Uma forma conceitual é:
+## 6.4 Orçamento de comunicação
 
-\[
-L =
-L_{task}
-+\lambda_r L_{routing}
-+\lambda_c L_{compute}
-+\lambda_l L_{locality}
-+\lambda_m L_{memory}
-+\lambda_p L_{paging}
-+\lambda_b L_{budget}
-+\lambda_i L_{io}
-+\lambda_s L_{steps}
-+\lambda_u L_{utilization}
-+\lambda_f L_{prefetch}
-\]
+Uma das hipóteses fundamentais é que mover estado seja muito mais barato do que mover pesos.
 
-Cada componente mede uma propriedade diferente.
+Se o vetor principal do State Packet possuir dimensão (d) e usar (p) bytes por elemento:
 
-O objetivo não é minimizar custo a qualquer preço.
+\[ StateBytes d p \]
 
-É encontrar trajetórias eficientes **sem perder capacidade útil**.
+Por exemplo, para (d=1024) em BF16:
 
----
+\[ StateBytes = 2048 \]
 
-# 28. Constraints duras
+aproximadamente 2 KiB para o vetor principal.
 
-Alguns limites podem ser estruturais:
+Isso deve ser comparado a Capability Nodes que podem ocupar megabytes.
 
-```text
-resident_bytes <= budget
-active_nodes <= limit
-max_graph_steps <= limit
-prefetch_bytes <= budget
-```
+Portanto, uma métrica nova deve ser registrada:
 
-Uma trajetória que viola o orçamento pode ser inválida.
+\[ StateTransportBytes/token \]
 
-Isso força o modelo a aprender estratégias executáveis em condições reais.
+Ela mede quanto tráfego neural de estado é necessário para navegar o grafo, separadamente de:
 
----
+\[ ParameterBytesFetched/token \]
 
-# 29. Resource Dropout
+O projeto só ganha se ambos permanecerem controlados.
 
-Durante treinamento, o hardware disponível pode variar artificialmente.
+# 7. Capability Graph
 
-Exemplo:
+O Capability Graph é um grafo de transformações neurais endereçáveis.
 
-```text
-batch A:
-RAM = 512 MiB
-storage = rápido
+Um node (v_i) possui parâmetros (\_i) e transforma estado.
 
-batch B:
-RAM = 2 GiB
-storage = médio
+A forma preferida continua residual:
 
-batch C:
-RAM = 16 GiB
-VRAM = disponível
-
-batch D:
-RAM = 1 GiB
-storage = lento
-```
-
-O microcore recebe um perfil abstrato:
-
-\[
-H =
-(memory,\ bandwidth,\ latency,\ compute,\ cache)
-\]
-
-O routing passa a depender de:
-
-\[
-R(h,S,H)
-\]
-
-O mesmo modelo pode aprender estratégias diferentes para diferentes máquinas.
-
----
-
-# 30. Um modelo, múltiplos budgets
-
-Uma consequência desejada é que o mesmo sistema possa operar em:
-
-```text
-1 GiB
-4 GiB
-16 GiB
-64 GiB
-```
-
-sem exigir checkpoints completamente diferentes.
-
-Com mais hardware, o sistema pode:
-
-- manter mais nodes residentes;
-- usar refinements maiores;
-- executar trajetórias mais profundas;
-- prefetchar mais;
-- reduzir latência.
-
-Com menos hardware, pode degradar de forma controlada.
-
----
-
-# 31. Módulos multirresolução
-
-Uma capacidade pode possuir múltiplos níveis:
-
-\[
-\theta_i =
-\theta_i^{base}
-+
-\Delta_i^1
-+
-\Delta_i^2
-+
-\Delta_i^3
-\]
-
-Exemplo:
-
-```text
-base compacta
-+ refinement 1
-+ refinement 2
-+ high precision residual
-```
-
-Máquinas pequenas utilizam apenas a base.
-
-Máquinas maiores podem carregar refinements adicionais.
-
-O mesmo Capability Graph passa a oferecer diferentes pontos de qualidade e custo.
-
----
-
-# 32. Sparse Training State
-
-Treinar um sistema enorme normalmente exige:
-
-```text
-weights
-gradients
-optimizer state
-activations
-```
-
-A GSNA propõe que apenas módulos utilizados por um batch materializem seu estado de treinamento.
-
-Para node A:
-
-```text
-load weights(A)
-load optimizer(A)
-
-forward
-backward
-update
-
-write A
-evict
-```
-
-Nodes não utilizados permanecem fora da memória.
-
-Assim:
-
-\[
-TrainingState_{resident}
-\ll
-TrainingState_{total}
-\]
-
-quando o treinamento for suficientemente esparso.
-
----
-
-# 33. Page-Major Training
-
-Durante treinamento, requisições podem ser reagrupadas por módulo.
-
-Suponha:
-
-```text
-sample 1 → node 81
-sample 2 → node 712
-sample 3 → node 81
-sample 4 → node 81
-sample 5 → node 712
-```
-
-Em vez de alternar I/O:
-
-```text
-81
-712
-81
-81
-712
-```
-
-o runtime pode fazer:
-
-```text
-LOAD 81
-process 1,3,4
-backward
-update
-EVICT
-
-LOAD 712
-process 2,5
-backward
-update
-EVICT
-```
-
-Isso pode transformar drasticamente o padrão de armazenamento durante treinamento.
-
----
-
-# 34. Crescimento estrutural
-
-A topologia do Capability Graph pode, futuramente, deixar de ser completamente fixa.
-
-O objeto de otimização passa de:
-
-\[
-Optimize(\Theta)
-\]
-
-para:
-
-\[
-Optimize(G,\Theta,R)
-\]
-
-O sistema pode investigar operações como:
-
-```text
-spawn
-split
-merge
-prune
-freeze
-retire
-```
-
----
-
-# 35. Split de capacidades
-
-Um node sobrecarregado por funções incompatíveis pode se dividir.
-
-```text
-node 31
-   │
-specialization pressure
-   │
-   ├── node 31a
-   └── node 31b
-```
-
-Isso permite que a arquitetura aumente capacidade onde existe demanda real.
-
----
-
-# 36. Merge e prune
-
-Nodes altamente redundantes podem ser fundidos.
-
-Nodes sem utilidade podem ser aposentados.
-
-A meta é evitar crescimento sem controle.
-
-Capacidade maior só é útil se contribuir para qualidade ou eficiência.
-
----
-
-# 37. Continual Learning modular
-
-Uma arquitetura modular pode permitir:
-
-```text
-core estável
-
-+ capability A
-+ capability B
-+ capability C
-```
-
-sem reescrever necessariamente todo o sistema.
-
-Isso pode ser útil para:
-
-- novas linguagens;
-- novos domínios;
-- novas ferramentas;
-- novas modalidades;
-- mudanças científicas;
-- especializações privadas.
-
----
-
-# 38. Layout físico orientado pelo grafo
-
-O runtime pode aprender estatísticas de acesso.
-
-Se:
-
-```text
-A → B → C
-```
-
-ocorre frequentemente, essas capacidades podem ser colocadas fisicamente próximas.
+\[ h’ = h + \_i(h;\_i) \]
 
 Isso permite:
 
-- menos random I/O;
-- shards mais coerentes;
-- melhor read-ahead;
-- maior prefetch accuracy;
-- menor latência.
+- degradação graciosa;
 
-Uma fase futura pode executar **graph packing**.
+- especialização incremental;
 
----
+- composição;
 
-# 39. Compilação de trajetórias quentes
+- menor dependência de uma ordem fixa;
 
-Trajetórias frequentes também podem ser otimizadas.
+- possibilidade de congelar capabilities estáveis.
+
+## 7.1 Direct edges
+
+A v0.3 torna explícito que edges podem representar transições reais de compute.
+
+Portanto, uma trajetória pode ser:
+
+    Language
+       |
+       v
+    Portuguese
+       |
+       v
+    Brazil
+      /   \
+     v     v
+    Law  Geography
+
+Não existe requisito de retorno ao RNC após cada node.
+
+O RNC pode participar da decisão, mas a topologia local pode oferecer transições diretas.
+
+## 7.2 Topologia local + busca hierárquica
+
+Para evitar comparação contra milhões de nodes, a política deve combinar duas escalas:
+
+1.  **local adjacency** — vizinhos semanticamente/topologicamente plausíveis;
+
+2.  **hierarchical routing** — acesso a regiões distantes do grafo.
+
+Assim, o próximo node pode ser escolhido entre:
+
+\[ Candidates(v_k)=Neighbors(v_k)GatewayCandidates(h_k) \]
+
+A hipótese é que conhecimento relacionado forme regiões com alta localidade de rota e, consequentemente, alta localidade física.
+
+# 8. Routing
+
+O roteamento é uma das áreas que ainda não foi resolvida pelas aplicações predecessoras.
+
+O Eyle deliberadamente não implementa semantic routing no registry. O MMB recebe IDs já escolhidos pelo router do modelo original.
+
+Na GSNA, o router precisa ser treinado.
+
+Uma formulação inicial:
+
+\[ score(ij) = s\_{semantic}(h_i,k_j) + s\_{topology}(i,j) + s\_{reuse}(j) - c\_{physical}(j,B) \]
+
+onde:
+
+- (k_j): routing key compacta;
+
+- (s\_{semantic}): compatibilidade entre estado e capability;
+
+- (s\_{topology}): prior da aresta;
+
+- (s\_{reuse}): valor de reutilizar node residente/quente;
+
+- (c\_{physical}): custo estimado de acessar o node;
+
+- (B): budget.
+
+O roteamento não pode otimizar custo físico a ponto de trocar uma capacidade necessária por uma errada.
+
+Portanto, custo deve atuar como preferência entre trajetórias semanticamente aceitáveis, não como substituto da qualidade.
+
+## 8.1 Routing collapse
+
+A arquitetura precisa prevenir o ciclo:
+
+    node recebe mais tráfego
+            |
+            v
+    recebe mais gradiente
+            |
+            v
+    fica melhor
+            |
+            v
+    recebe ainda mais tráfego
+
+Estratégias candidatas:
+
+- soft routing no warmup;
+
+- top-k com straight-through estimator;
+
+- Gumbel-style exploration;
+
+- auxiliary load-balance loss;
+
+- entropy floor;
+
+- minimum exploration quota;
+
+- per-node capacity;
+
+- utilization regularization;
+
+- router temperature schedule.
+
+A escolha exata é uma decisão bloqueante para o protótipo.
+
+# 9. Frontier-Scheduled Graph Execution
+
+Trajetórias dinâmicas criam um problema: GPUs são eficientes com grandes batches; grafos token-específicos tendem a fragmentar execução.
+
+A v0.3 propõe um mecanismo de execução inspirado pela experiência de batching e page-major scheduling do MMB:
+
+**os State Packets mantêm rotas individuais, mas o runtime agrupa a fronteira corrente por node.**
 
 Exemplo:
 
-```text
-A → B → C → D
-```
+    packet 1 -> Node 81
+    packet 2 -> Node 712
+    packet 3 -> Node 81
+    packet 4 -> Node 81
+    packet 5 -> Node 712
 
-pode produzir:
+O executor transforma a frontier em:
 
-```text
-packed storage region
-prefetch schedule
-fused execution plan
-hot residency class
-```
+    Node 81  <- packets 1,3,4
+    Node 712 <- packets 2,5
 
-A topologia lógica permanece dinâmica.
+e executa:
 
-O runtime otimiza os caminhos mais utilizados.
+    route frontier
+          |
+          v
+    group by node_id
+          |
+          v
+    pin/load required nodes
+          |
+          v
+    batched node compute
+          |
+          v
+    update packet states
+          |
+          v
+    next frontier
 
----
+Esse mecanismo tenta preservar simultaneamente:
 
-# 40. Arquitetura neural e runtime como um único sistema
+- roteamento por estado;
 
-A GSNA assume co-design.
+- batching;
 
-```text
-Neural Microcore
-      │
-      ▼
-routing / future prediction
-      │
-      ▼
-Runtime
-      │
-      ▼
-Hardware
-      │
-   telemetry
-      ▼
-Training Objective
-      │
-      └────────► Microcore / Router
-```
+- locality;
 
-O modelo aprende a utilizar recursos.
+- reuse;
 
-O runtime materializa os recursos.
+- page-major execution;
 
-O hardware fornece sinais.
+- menor número de page faults.
 
----
+Ele é uma proposta nova da v0.3 e precisa ser validado.
 
-# 41. Hardware-aware intelligence
+# 10. Integration
 
-Sinais possíveis:
+Uma trajetória pode ser linear ou possuir fan-out.
 
-```text
-resident bytes
-cache hits
-cache misses
-page faults
-bytes loaded
-latency
-bandwidth
-compute rate
-memory pressure
-prefetch accuracy
-```
+Para o primeiro protótipo, a v0.3 recomenda limitar fan-out e utilizar integração residual ponderada:
 
-Duas trajetórias semanticamente equivalentes podem receber custos diferentes.
+\[ h\_{k+1} = h_k+ \_{iA_k} \_i_i(h_k) \]
 
-O sistema passa a aprender parcialmente:
+com:
 
-> **como pensar de forma fisicamente eficiente.**
+\[ \_i_i=1 \]
 
----
+Isso permite top-k paralelo sem introduzir imediatamente um Integration Node complexo em cada bifurcação.
 
-# 42. Portabilidade
+Integração recursiva, message passing assíncrono e múltiplos ramos independentes devem permanecer fora do primeiro protótipo.
 
-A arquitetura não deve aprender detalhes acidentais de uma única máquina.
+# 11. Memory Graph na GSNA
 
-O treinamento deve trabalhar com propriedades abstratas:
+O Memory Graph continua distinto do Capability Graph.
 
-```text
-cheap
-expensive
-resident
-remote
-fast
-slow
-prefetchable
-reusable
-```
+## Parameter / Capability Graph
 
-O runtime traduz:
+Representa capacidade neural aprendida:
 
-```text
-"remote + slow"
-```
+    language transformations
+    reasoning primitives
+    code capability
+    mathematics
+    domain representations
+    specialized neural computation
 
-para:
+## Memory Graph
 
-```text
-SSD
-HDD
-network store
-```
+Representa conhecimento explicitamente revisável:
 
-dependendo da plataforma.
+    facts
+    events
+    observations
+    hypotheses
+    relations
+    provenance
+    temporal validity
+    revision
+    confidence
 
----
+A regra permanece:
 
-# 43. O que a GSNA não é
+    generalizable capability
+        -> Parameter Graph
 
-GSNA não é simplesmente:
+    mutable/verifiable knowledge
+        -> Memory Graph
 
-```text
-Transformer + RAG
-```
+## 11.1 Memory Gateway
 
-Não é apenas:
+O ponto ainda não resolvido é a interface neural.
 
-```text
-Transformer + MoE
-```
+A v0.3 propõe um **Memory Gateway** que converta uma consulta do State Packet em uma operação de memória e retorne uma representação compacta.
 
-Não é apenas:
+A primeira implementação pode continuar materializando conteúdo estruturado e codificá-lo neuralmente.
 
-```text
-virtual memory aplicada a weights
-```
+Uma evolução posterior pode retornar embeddings, typed records ou estados neurais sem serialização textual completa.
 
-Não é apenas:
+O Memory Gateway deve preservar os invariantes do Eyle:
 
-```text
-GNN para linguagem
-```
+- identidade;
 
-A proposta é mais ampla:
+- proveniência;
 
-> **a organização da computação neural, dos parâmetros, do endereçamento, da memória e do hardware faz parte da própria arquitetura.**
+- revisão;
 
----
+- temporalidade;
 
-# 44. Relação com MoE
+- bounded materialization;
 
-MoE tradicional oferece sparsity de experts.
+- ausência de hidden global semantic projection.
 
-GSNA generaliza o princípio para:
+# 12. Runtime GSNA
 
-- topologia global;
-- profundidade variável;
-- routing hierárquico;
-- parâmetros não residentes;
-- índice paginável;
-- memória persistente;
-- prefetch treinável;
-- budget-aware execution;
-- crescimento estrutural.
+O runtime deve ser tratado como parte da arquitetura.
 
----
+Uma composição mínima:
 
-# 45. Relação com sistemas de memória virtual
+    GSNA Runtime
+    |
+    +-- Node Registry
+    +-- Graph Topology Store
+    +-- Frontier Scheduler
+    +-- Residency Manager
+    +-- RAM Cache
+    +-- VRAM Cache
+    +-- Parameter Store
+    +-- Lease Manager
+    +-- Prefetch Queue
+    +-- Integrity Verifier
+    +-- Budget Manager
+    +-- Telemetry
+    +-- Failure / Recovery
 
-Existe uma analogia:
+## 12.1 Contratos herdados do MMB
 
-```text
-Sistema operacional:
-virtual address
-page table
-page cache
-scheduler
+A v0.3 recomenda manter os seguintes invariantes:
 
-GSNA:
-Capability ID
-Capability Address Space
-residency cache
-neural router
-```
+1.  node ativo possui lease/pin durante compute;
 
-Mas existe uma diferença fundamental:
+2.  node corrompido não produz compute silencioso;
 
-> na GSNA, o produtor dos acessos também pode aprender a gerar padrões de acesso melhores.
+3.  page length, shape, type e version precisam coincidir;
 
----
+4.  load de batch deve possuir commit consistente;
 
-# 46. Objetivo principal
+5.  métricas ausentes permanecem unavailable;
 
-O objetivo principal é:
+6.  runtime não altera semanticamente a rota sem sinalizar failure;
 
-> **Construir um sistema neural cujo custo marginal seja determinado predominantemente pelo subgrafo ativado e pelo orçamento escolhido, e não diretamente pela capacidade total armazenada.**
+7.  cache policy é substituível e mensurável;
 
-Idealmente:
+8.  I/O e compute possuem janelas de telemetria separáveis.
 
-\[
-Cost(token)
-\approx
-Cost(microcore)
-+
-Cost(active\ capabilities)
-+
-Cost(required\ I/O)
-\]
+## 12.2 Diferença para o MMB
 
----
+O MMB materializa experts escolhidos por uma arquitetura fixa.
 
-# 47. Objetivos mensuráveis
+A GSNA precisa materializar nodes escolhidos por uma política treinada com feedback sobre:
 
-## Qualidade
+- residency;
 
-```text
-perplexity
-reasoning
-coding
-factuality
-planning
-multimodal tasks
-long-term memory
-```
+- bytes fetched;
 
-## Computação
+- cache hit;
 
-\[
-FLOPs/token
-\]
+- page faults;
 
-## Ativação
+- latency;
 
-\[
-\frac{ActiveParameters}{TotalParameters}
-\]
+- prefetch accuracy;
 
-## Residência
+- compute budget.
 
-\[
-\frac{ResidentParameters}{TotalParameters}
-\]
+Essa realimentação é o passo de co-design que o MMB, por construção, não poderia introduzir no modelo original.
 
-## I/O
+# 13. Budget-Constrained Training
 
-\[
-BytesFetched/token
-\]
+O treinamento da GSNA deve otimizar qualidade sob restrições físicas explícitas.
 
-## Índice
+A ideia não é treinar primeiro ignorando hardware e depois adicionar um runtime que tente “consertar” o padrão de acesso.
 
-```text
-resident index bytes
-lookup latency
-nodes examined/query
-```
+O hardware disponível faz parte do ambiente de treinamento.
 
-## Cache
+Definimos um vetor de budget:
 
-```text
-hit ratio
-reuse distance
-evictions
-```
+\[ B_t = ( B\_{ram}, B\_{vram}, B\_{io}, B\_{compute}, B\_{latency}, B\_{prefetch} ) \]
 
-## Roteamento
+onde:
 
-```text
-entropy
-load balance
-route stability
-route depth
-```
+- (B\_{ram}): quantidade de RAM que o runtime pode consumir;
 
-## Treinamento
+- (B\_{vram}): quantidade de VRAM disponível para compute/cache;
 
-```text
-resident optimizer bytes
-resident gradient bytes
-nodes updated/batch
-I/O/update
-```
+- (B\_{io}): limite de bytes ou bandwidth para materialização;
 
----
+- (B\_{compute}): limite de FLOPs ou passos de grafo;
 
-# 48. Hipótese de escalabilidade
+- (B\_{latency}): restrição de tempo para a operação;
 
-O experimento mais importante não é simplesmente aumentar parâmetros.
+- (B\_{prefetch}): limite de bytes que podem ser carregados especulativamente.
 
-É aumentar capacidade total mantendo o custo ativo aproximadamente estável.
+Quando o documento usa uma forma mais curta:
 
-Exemplo:
+\[ C=C(B,Q,L) \]
 
-```text
-GSNA-A
-100M total
-32M resident
+os símbolos significam:
 
-GSNA-B
-200M total
-33M resident
+- \(B\) = **orçamento físico** disponível para a configuração;
 
-GSNA-C
-400M total
-35M resident
+- \(Q\) = **qualidade desejada**, expressa por uma ou mais métricas de tarefa;
 
-GSNA-D
-800M total
-37M resident
-```
+- \(L\) = **restrição de latência** aceitável.
 
-e observar:
+Essa forma curta serve para discutir sizing do RNC. Ela não substitui a telemetria detalhada de (B_t).
 
-```text
-quality               ↑
-resident bytes         ~
-FLOPs/token            ~
-bytes/token            ~
-```
+Uma função objetivo genérica permanece:
 
-Essa seria evidência direta da hipótese estrutural.
+\[ L = L\_{LM} +*rL*{routing} +*uL*{utilization} +*cL*{compute} +*lL*{locality} +*pL*{paging} +*iL*{io} +*sL*{steps} +*bL*{budget} +*fL*{prefetch} \]
 
----
+onde:
 
-# 49. Capacidade 100× maior não implica inteligência 100×
+- (L\_{LM}): loss autoregressiva principal;
 
-Essa distinção é obrigatória.
+- (L\_{routing}): qualidade/regularização do roteamento;
 
-Se o sistema passar de:
+- (L\_{utilization}): evita concentração degenerada em poucos nodes;
 
-```text
-1 TB de capacidade
-```
+- (L\_{compute}): penaliza compute desnecessário;
 
-para:
+- (L\_{locality}): favorece reuso quando semanticamente aceitável;
 
-```text
-100 TB de capacidade
-```
+- (L\_{paging}): penaliza page faults e materializações caras;
 
-não segue que ele seja:
+- (L\_{io}): penaliza bytes transferidos;
 
-```text
-100× mais inteligente
-```
+- (L\_{steps}): controla profundidade dinâmica;
 
-Capacidade adicional pode produzir:
+- (L\_{budget}): penaliza violações do orçamento físico;
 
-- especialização;
-- cobertura;
-- conhecimento implícito;
-- melhor reasoning;
-- melhores ferramentas;
-- redundância;
-- capacidades novas.
+- (L\_{prefetch}): treina previsibilidade sem permitir que prefetch altere semântica.
 
-A relação entre parâmetros totais e inteligência precisa ser medida.
+Nem todos os termos devem ser ativados no primeiro treinamento.
 
-Portanto, a hipótese correta é:
+A ordem correta é:
 
-> **o mesmo hardware pode potencialmente endereçar um sistema muito mais pesado, e devemos investigar quanto dessa capacidade adicional se converte em qualidade útil.**
+1.  provar que o Graph LM aprende linguagem;
 
----
+2.  provar que o routing não colapsa;
 
-# 50. O computador pequeno
+3.  provar que capacidade adicional melhora qualidade;
 
-Considere uma máquina comum com:
+4.  só então pressionar locality, paging e budgets.
 
-```text
-RAM limitada
-GPU pequena ou ausente
-SSD relativamente grande
-```
+Uma penalidade física forte demais no início pode ensinar o modelo a simplesmente não usar suas capabilities.
 
-Uma GSNA madura poderia manter:
+## 13.1 Hard constraints versus soft penalties
 
-```text
-microcore
-+
-índice quente
-+
-working cache
-```
+Alguns limites devem ser tratados como restrições duras:
 
-na memória disponível.
+    max_graph_steps
+    max_active_nodes
+    max_resident_bytes
+    max_prefetch_bytes
 
-O restante permanece em storage.
+Outros podem ser penalties suaves:
 
-Conceitualmente:
+    reuse preference
+    routing entropy
+    average FLOPs
+    average bytes/token
 
-```text
-1 GiB working set
-       │
-       ▼
-10 GB / 100 GB / TB de capabilities em disco
-```
+Essa distinção precisa ser explícita no runtime e no treinamento.
 
-Isso poderia permitir acesso a sistemas muito maiores que a RAM física.
+## 13.2 Resource Dropout revisado
 
-A velocidade dependeria de:
+Resource Dropout continua válido, mas não deve transformar o menor hardware em objetivo universal.
 
-- bandwidth;
-- cache hit rate;
-- bytes/token;
-- qualidade do prefetch;
-- compute local.
+O mesmo checkpoint pode ser exposto durante treinamento a perfis como:
 
-O objetivo não é eliminar essas limitações.
+    Profile A: baixo budget de RAM, storage lento
+    Profile B: RAM moderada, storage rápido
+    Profile C: VRAM disponível
+    Profile D: grande cache residente
 
-É desacoplar **capacidade disponível** de **memória obrigatoriamente residente**.
+A meta é aprender degradação graciosa e políticas diferentes, não forçar todas as configurações a se comportarem como a menor.
 
----
+# 14. Sparse Training State
 
-# 51. O computador grande
+O princípio da v0.2 permanece:
 
-O princípio também beneficia hardware de alto desempenho.
+\[ TrainingState\_{resident}TrainingState\_{total} \]
 
-Considere um servidor que hoje consegue manter:
+quando somente um subconjunto de nodes participa de um batch/frontier.
 
-```text
-X parâmetros
-```
+Mas a v0.3 trata esse recurso como **fase posterior**, não requisito do primeiro Graph LM.
 
-em memória rápida.
+O primeiro objetivo é provar a arquitetura neural inteiramente residente.
 
-Uma GSNA não precisa usar essa memória apenas para fazer caber o modelo atual.
+Depois, optimizer state e gradients podem ser materializados por node.
 
-Ela pode usá-la como um enorme working set para um Capability Graph muito maior.
+Questões ainda abertas:
 
-Conceitualmente:
+- staleness de optimizer state em nodes raros;
 
-```text
-hardware atual
-      │
-      ▼
-grande cache residente
-      │
-      ▼
-Capability Graph
-10×
-100×
-ou mais pesado
-```
+- momentum de módulos esparsamente atualizados;
 
-A razão não é mágica.
+- writeback policy;
 
-É simplesmente:
+- atomicidade de checkpoint;
 
-\[
-ResidentCapacity
-\neq
-TotalCapacity
-\]
+- batching de updates;
 
----
+- distributed optimizer state;
 
-# 52. Frontier-scale systems
+- relação entre route frequency e learning rate.
 
-Para laboratórios de fronteira, provedores de cloud e grandes empresas de IA, a propriedade economicamente interessante seria:
+# 15. Prefetch treinável
 
-> **aumentar a capacidade lógica sem exigir crescimento proporcional de HBM e VRAM por instância.**
+O MMB provou que prefetch e paralelização não podem corrigir completamente um padrão de acesso adverso.
 
-Se uma infraestrutura consegue atender um modelo residente de tamanho \(X\), uma arquitetura altamente esparsa e paginável poderia investigar capacidades totais:
+Na GSNA, a política pode prever:
 
-\[
-10X,\ 50X,\ 100X
-\]
+\[ P(v\_{k+1},v\_{k+2},…,v\_{k+n}\|h_k) \]
 
-mantendo apenas uma fração ativa.
+O runtime usa isso somente como hint.
 
-Isso não significa que o sistema ficaria automaticamente 10×, 50× ou 100× melhor.
+A propriedade semântica permanece:
 
-Significa que o hardware passaria a poder **endereçar um espaço de capacidade muito maior**.
+prefetch pode errar sem mudar a resposta; routing não pode ser substituído pelo prefetch.
 
----
+Métricas:
 
-# 53. Uma nova curva econômica
+    prefetch_hit_rate
+    prefetched_bytes/token
+    blocking_bytes/token
+    wasted_prefetch_bytes/token
+    prefetch_lead_time
 
-Hoje, aproximadamente:
+# 16. Módulos como áreas de conhecimento
 
-```text
-mais capacidade
-     ↓
-mais memória rápida
-     ↓
-mais GPUs
-     ↓
-mais custo
-```
+Capability Nodes podem desenvolver especializações como:
 
-A GSNA tenta criar:
+- sintaxe;
 
-```text
-mais capacidade total
-     ↓
-mais storage
-+ melhor routing
-+ melhor locality
-     ↓
-crescimento muito menor
-do working set rápido
-```
+- português;
 
-Storage é significativamente mais barato e mais abundante que memória de alta velocidade.
+- código;
 
-Se a quantidade de bytes movimentados por token puder ser mantida baixa, parte do scaling pode migrar de:
+- álgebra;
 
-```text
-HBM-bound
-```
+- planejamento;
 
-para:
-
-```text
-addressability + locality + storage hierarchy
-```
-
----
-
-# 54. Impacto sobre acesso individual
-
-Uma arquitetura desse tipo poderia reduzir a distância entre:
-
-```text
-modelo disponível
-```
-
-e:
-
-```text
-modelo executável localmente
-```
-
-Potenciais consequências:
-
-- IA local mais capaz;
-- maior privacidade;
-- menor dependência de cloud;
-- uso offline;
-- modelos especializados distribuíveis;
-- maior vida útil de hardware antigo;
-- acesso educacional mais amplo.
-
----
-
-# 55. Impacto sobre empresas
-
-Empresas poderiam distribuir:
-
-```text
-microcore comum
-+
-capability packs privados
-+
-memory graphs locais
-```
-
-Isso permitiria sistemas especializados sem duplicar uma base inteira de modelo para cada domínio.
-
-Possíveis usos:
+- geometria;
 
 - medicina;
-- direito;
-- engenharia;
-- ciência;
-- software;
-- indústria;
-- finanças;
-- operações internas.
 
----
+- entidades;
 
-# 56. Impacto sobre cloud
+- ferramentas;
 
-Clouds poderiam separar:
+- abstração.
 
-```text
-hot capability tier
-warm capability tier
-cold capability tier
-```
+Esses nomes são interpretações posteriores.
 
-e compartilhar capabilities imutáveis entre múltiplas sessões.
+A arquitetura não deve depender de uma taxonomia humana completa.
 
-O custo de serving poderia passar a depender mais de:
+O que precisa emergir durante o treinamento é:
 
-```text
-working set real
-```
+- reutilização;
 
-e menos de:
+- especialização útil;
 
-```text
-tamanho lógico completo
-```
+- baixa interferência;
 
----
+- rotas estáveis;
 
-# 57. Impacto sobre treinamento
+- locality;
 
-Sparse Training State e Page-Major Training podem permitir treinamento de espaços de capacidade maiores que a memória agregada imediatamente disponível para optimizer state.
+- redução de loss.
 
-Isso poderia abrir pesquisa em:
+Metadados interpretáveis podem ser derivados depois para diagnóstico, distribuição e governança.
 
-- modelos muito grandes com ativação extrema;
-- especialização modular;
-- crescimento estrutural;
-- treinamento incremental;
-- capability packs independentes.
+# 17. O que a v0.3 congela
 
----
+A versão 0.3 considera os pontos abaixo parte da arquitetura, e não mais perguntas abertas:
 
-# 58. Impacto sobre evolução de modelos
+1.  **estado neural, e não token ID bruto, percorre o grafo;**
 
-Hoje uma nova geração frequentemente exige treinar ou distribuir um checkpoint monolítico.
+2.  **Memory Graph e Parameter/Capability Graph são distintos;**
 
-Uma arquitetura modular pode permitir:
+3.  **capabilities são endereçáveis;**
 
-```text
-base estável
-+
-novas capabilities
-+
-novas memórias
-+
-novos índices
-```
+4.  **capabilities podem possuir parâmetros não residentes;**
 
-A evolução do sistema pode tornar-se mais incremental.
+5.  **Resident Neural Core (RNC) substitui o conceito de “RNC pequeno” como terminologia canônica;**
 
----
+6.  **o RNC é residente, mas não é hub obrigatório entre capabilities;**
 
-# 59. Impacto sobre propriedade e distribuição
+7.  **o RNC pode crescer quando isso melhora qualidade; seu tamanho não é constante por definição;**
 
-Capabilities poderiam, em princípio, possuir:
+8.  **o tamanho do RNC e o tamanho do Capability Graph são eixos de scaling arquiteturalmente desacoplados;**
 
-```text
-version
-identity
-license
-signature
-provenance
-compatibility
-```
+9.  **RNC-128MB é o baseline inicial de pesos residentes, não um limite permanente;**
 
-Isso permitiria ecossistemas modulares.
+10. **Fast State Fabric é componente de primeira classe e pertence logicamente ao RNC;**
 
-Um sistema poderia carregar:
+11. **direct capability-to-capability transitions são permitidas;**
 
-```text
-capability de linguagem
-capability de código
-capability científica
-capability corporativa privada
-```
+12. **roteamento deve considerar semântica, topologia e custo físico;**
 
-sem necessariamente fundir tudo em um único checkpoint.
+13. **runtime não é semantic router;**
 
----
+14. **paging é parte esperada da arquitetura, não fallback;**
 
-# 60. Impacto científico
+15. **bytes/token é métrica de primeira classe;**
 
-A GSNA muda a pergunta de scaling.
+16. **StateTransportBytes/token deve ser medido separadamente de ParameterBytesFetched/token;**
 
-Em vez de apenas:
+17. **o primeiro Graph LM deve ser testado inteiramente residente antes de paging físico;**
 
-> Quantos parâmetros conseguimos treinar?
+18. **frontier scheduling é o modelo de execução candidato para preservar batching sem destruir rotas individuais;**
 
-passamos a perguntar:
+19. **crescimento estrutural não é requisito do primeiro protótipo;**
 
-> Quantos parâmetros conseguimos tornar endereçáveis mantendo pequeno o custo de cada operação?
+20. **continual learning, multiresolução e distribuição ficam depois da prova de routing/capacity scaling;**
 
-E:
+21. **o target de hardware é um parâmetro de deployment, não uma definição da arquitetura.**
 
-> Até onde qualidade continua melhorando quando capacidade total cresce, mas atividade e residência permanecem limitadas?
+# 18. Registro de decisões em aberto
 
-Isso é uma hipótese científica mensurável.
+Esta seção é o principal backlog científico e de engenharia da v0.3.
 
----
+Uma decisão é marcada como:
 
-# 61. Primeiro protótipo
+- **FROZEN** — congelada para o baseline inicial;
 
-A primeira implementação deve ser pequena.
+- **OPEN / BLOCKING** — precisa ser resolvida antes do primeiro experimento correspondente;
 
-Exemplo:
+- **OPEN / NON-BLOCKING** — pode usar baseline simples;
 
-```text
-hidden dimension:     512
-microcore:            5M–20M
-capability nodes:     128–512
-node parameters:      0.5M–2M
-active nodes/step:    2–4
-max graph steps:      8–16
-total parameters:     50M–200M
-```
+- **DEFERRED** — deliberadamente adiada.
 
-Inicialmente tudo pode permanecer residente.
+## D-001 — Orçamento do RNC inicial
 
-O primeiro objetivo é provar o routing e a aprendizagem.
+**Status:** FROZEN para o baseline.
 
----
+\[ RNCWeightBytes = 128 \]
 
-# 62. Primeira pergunta experimental
+A primeira implementação deve usar esse budget como ponto central.
 
-> **Um microcore com grafo de capacidades dinamicamente roteado consegue aprender modelagem autoregressiva competitiva?**
+Ainda precisa registrar:
 
-Se não, a arquitetura precisa ser revisada antes de paging.
+- precisão dos pesos;
 
-Nenhuma otimização de storage deve mascarar uma arquitetura neural inadequada.
+- número efetivo de parâmetros;
 
----
+- embeddings incluídos ou não;
 
-# 63. Segunda pergunta experimental
+- LM head incluído ou não;
 
-> **Aumentar o número total de capabilities melhora qualidade sem aumentar proporcionalmente parâmetros ativos?**
+- overhead real;
 
-Comparar:
+- RNCTotalResidentBytes.
 
-```text
-1× nodes
-2× nodes
-4× nodes
-8× nodes
-```
+## D-002 — Precisão e número de parâmetros do RNC-128MB
 
-mantendo aproximadamente constante:
+**Status:** OPEN / BLOCKING.
 
-```text
-active nodes
-compute/token
-```
+O budget é em bytes. A precisão ainda não está congelada.
 
----
+Candidatos iniciais:
 
-# 64. Terceira pergunta experimental
+- BF16/FP16 para baseline de treinamento simples;
 
-> **A qualidade permanece quando a maior parte dos parâmetros deixa de estar residente?**
+- FP32 somente para debug/ablation;
 
-Agora introduzir:
+- INT8/4-bit principalmente para inferência e testes posteriores.
 
-```text
-cache
-pager
-eviction
-leases
-parameter store
-```
+Pergunta:
 
-e medir:
+é melhor um RNC com menos parâmetros e maior precisão ou mais parâmetros com quantização, sob o mesmo budget de 128 MB?
 
-\[
-Resident
-\ll
-Total
-\]
+Teste obrigatório: comparar qualidade e throughput sob budget idêntico de bytes.
 
----
+## D-003 — Arquitetura interna do RNC
 
-# 65. Quarta pergunta experimental
+**Status:** OPEN / BLOCKING.
 
-> **O modelo aprende localidade?**
+O RNC precisa oferecer inteligência basal e um estado adequado ao roteamento.
 
-Adicionar custos de:
+Candidatos:
 
-```text
-cache miss
-bytes fetched
-paging wait
-prefetch waste
-```
+- SSM causal;
 
-e observar se trajetórias mudam.
+- recorrência moderna com scan;
 
----
+- atenção causal local;
 
-# 66. Quinta pergunta experimental
+- pequeno Transformer;
 
-> **O mesmo checkpoint funciona sob diferentes budgets?**
+- híbrido SSM + atenção local;
 
-Testar:
+- mecanismo próprio.
 
-```text
-16 MiB
-32 MiB
-64 MiB
-128 MiB
-```
+A melhor escolha será a que maximizar:
 
-e medir degradação.
+\[ \]
 
-Uma arquitetura robusta deve degradar gradualmente.
+sem transformar o RNC em hub obrigatório.
 
----
+## D-004 — Arquitetura do Fast State Fabric
 
-# 67. Sexta pergunta experimental
-
-> **O índice também pode crescer sem se tornar um novo core gigante?**
-
-Medir:
-
-```text
-total capabilities
-total index size
-resident index size
-lookup latency
-lookup accuracy
-```
-
-Esse teste é crítico.
-
-Sem ele, o problema de memória apenas migra dos pesos para o diretório.
-
----
-
-# 68. Sétima pergunta experimental
-
-> **Training State pode ser realmente paginado?**
-
-Construir um treinamento no qual:
-
-\[
-weights + optimizer
->
-RAM
-\]
-
-mas:
-
-\[
-resident\ training\ state
-<
-RAM
-\]
-
-e verificar convergência e throughput.
-
----
-
-# 69. Baselines obrigatórios
-
-Comparar pelo menos:
-
-```text
-Dense Transformer
-MoE Transformer
-SSM / recurrent moderno
-GSNA
-```
-
-com orçamento de treinamento comparável.
-
-Não basta comparar parâmetros totais.
-
-Medir:
-
-```text
-training FLOPs
-inference FLOPs
-active params/token
-resident bytes
-bytes/token
-latency
-quality
-training-state residency
-```
-
----
-
-# 70. Critérios de sucesso
-
-## Critério 1
-
-Qualidade competitiva em pequena escala.
-
-## Critério 2
-
-Routing esparso estável.
-
-## Critério 3
-
-Capacidade total cresce mais rápido que parâmetros ativos.
-
-## Critério 4
-
-Resident bytes crescem muito mais lentamente que total parameters.
-
-## Critério 5
-
-Bytes/token permanecem controlados.
-
-## Critério 6
-
-O mesmo sistema opera sob múltiplos budgets.
-
-## Critério 7
-
-Índice total cresce sem exigir residência total.
-
-## Critério 8
-
-Training State pode ser materializado sob demanda.
-
----
-
-# 71. Uma prova estrutural forte
-
-Um resultado particularmente convincente seria:
-
-```text
-Total capacity       1× → 8×
-Quality              melhora
-Active parameters    ~constante
-Resident bytes       ~constante
-FLOPs/token          ~constante
-Bytes/token          ~constante
-```
-
-Isso demonstraria que a arquitetura está conseguindo converter capacidade externa em utilidade sem carregar proporcionalmente o custo físico.
-
----
-
-# 72. Métrica de eficiência de scaling
-
-Uma métrica conceitual:
-
-\[
-ScalingEfficiency
-=
-\frac{\Delta Quality}
-{\Delta ResidentBytes
-+
-\Delta FLOPs
-+
-\Delta IO}
-\]
-
-O objetivo é maximizar ganho de capacidade útil por unidade adicional de custo ativo.
-
----
-
-# 73. Riscos científicos
-
-## Routing collapse
-
-O sistema usa sempre os mesmos nodes.
-
-## Fragmentação
-
-Existem muitos módulos pouco úteis.
-
-## I/O domination
-
-A arquitetura é esparsa, mas storage domina a latência.
-
-## Router overhead
-
-A busca custa mais que o compute economizado.
-
-## Index explosion
-
-O índice cresce até se tornar outro modelo residente.
-
-## Training instability
-
-Roteamento discreto dificulta otimização.
-
-## Catastrophic routing changes
-
-Pequenos updates alteram trajetórias inteiras.
-
-## Prefetch waste
-
-Muitas páginas são carregadas e não utilizadas.
-
-## Microcore bottleneck
-
-O núcleo pequeno limita inteligência global.
-
-## Resource overfitting
-
-A arquitetura aprende um hardware específico.
-
-## Structural churn
-
-Split/merge excessivo impede estabilidade.
-
-## Sparse update starvation
-
-Capabilities raras recebem pouco treinamento.
-
----
-
-# 74. O microcore não deve ser pequeno por dogma
-
-Existe um tamanho mínimo necessário para:
-
-- representar estado;
-- integrar resultados;
-- produzir queries;
-- controlar routing;
-- manter linguagem basal;
-- operar memória.
-
-Portanto:
-
-> **o melhor microcore é o menor que preserva coordenação suficiente, não o menor possível.**
-
----
-
-# 75. O storage não é RAM
-
-A arquitetura não elimina física.
-
-Se cada token exigir:
-
-```text
-4 GB
-```
-
-de leitura, um SSD será gargalo.
-
-Por isso, o sucesso depende de:
-
-```text
-bytes/token baixos
-reuso alto
-prefetch correto
-rotas previsíveis
-cache eficiente
-nodes de granularidade adequada
-```
-
-Paging só funciona quando existe localidade suficiente.
-
----
-
-# 76. Granularidade dos nodes
-
-Nodes pequenos:
-
-```text
-+ menos bytes por miss
-+ maior especialização
-- mais routing
-- mais metadata
-- mais fragmentação
-```
-
-Nodes grandes:
-
-```text
-+ melhor compute density
-+ menos routing
-- mais bytes por miss
-- maior desperdício
-```
-
-A granularidade ideal precisa ser descoberta experimentalmente.
-
----
-
-# 77. Integridade
-
-Parâmetros externos precisam ser tratados como objetos verificáveis.
-
-Cada capability pode possuir:
-
-```text
-capability_id
-version
-size
-checksum
-format
-dependencies
-```
-
-Falha de leitura ou corrupção não deve produzir compute parcial silencioso.
-
----
-
-# 78. Segurança de atualização
-
-Capabilities modulares podem evoluir independentemente.
-
-O runtime deve ser capaz de:
-
-```text
-load candidate
-validate
-activate
-rollback
-```
-
-sem comprometer o microcore ou o restante do sistema.
-
----
-
-# 79. Possíveis melhorias futuras
-
-Entre as extensões de longo prazo estão:
-
-- hierarchical predictive routing;
-- learned graph packing;
-- multiresolution weights;
-- capability distillation;
-- adaptive precision;
-- dynamic graph growth;
-- learned cache policy;
-- remote capability execution;
-- distributed capability fabrics;
-- federated capability updates;
-- hardware-specific execution planners;
-- neural compression of routing indices;
-- learned address structures;
-- speculative capability execution;
-- asynchronous memory consolidation.
-
----
-
-# 80. Capability Distillation
-
-Capabilities muito utilizadas podem ser parcialmente destiladas para regiões mais próximas do microcore.
-
-Exemplo:
-
-```text
-capability externa muito quente
-       ↓
-compact summary/residual
-       ↓
-hot local capability
-```
-
-O sistema pode adaptar sua estrutura física ao uso real.
-
----
-
-# 81. Dynamic Precision
-
-Uma mesma capability pode existir em múltiplas precisões.
-
-O runtime pode decidir:
-
-```text
-Q2
-Q4
-Q6
-FP16
-```
-
-de acordo com:
-
-- budget;
-- importância;
-- sensitividade;
-- hardware;
-- profundidade desejada.
-
-Isso adiciona outro eixo de elasticidade.
-
----
-
-# 82. Distribuição em larga escala
-
-Em clusters, o Capability Fabric pode ser distribuído.
-
-```text
-microcore
-   │
-   ├── local VRAM
-   ├── local RAM
-   ├── node-local NVMe
-   ├── rack-local capability store
-   └── remote capability store
-```
-
-Routing e residency tornam-se um problema conjunto de rede, memória e compute.
-
----
-
-# 83. A arquitetura como sistema operacional neural
-
-Uma analogia útil é:
-
-```text
-microcore        → kernel neural
-Capability IDs   → virtual addresses
-Capability Graph → addressable program space
-resident cache   → working set
-pager            → memory manager
-router           → scheduler/planner
-Memory Graph     → persistent structured state
-```
-
-Não é uma equivalência literal.
-
-Mas expressa a mudança conceitual:
-
-> o modelo deixa de ser apenas um tensor estático carregado em memória e passa a ser um espaço de capacidades administrado dinamicamente.
-
----
-
-# 84. Potencial de democratização
-
-Se capacidade total puder ser separada do working set obrigatório, o piso de hardware para acessar sistemas avançados pode cair.
-
-Isso pode permitir:
-
-```text
-hardware pequeno
-→ menor velocidade
-→ mesmo espaço lógico de capacidades
-```
-
-enquanto:
-
-```text
-hardware grande
-→ mais cache
-→ mais paralelismo
-→ maior profundidade
-→ maior velocidade
-```
-
-A diferença entre máquinas passa a afetar principalmente **quanto do sistema pode permanecer próximo do compute e quão rápido ele pode navegar**, não necessariamente quais capacidades existem no storage.
-
----
-
-# 85. Potencial de superescala
-
-No outro extremo, uma infraestrutura de 2026 capaz de hospedar um grande modelo residente poderia usar o mesmo hardware como working set para uma arquitetura logicamente muito maior.
-
-A hipótese é:
-
-```text
-mesmo hardware rápido
-      │
-      ▼
-não apenas modelo X
-      │
-      ▼
-mas Capability Graph
-muitas vezes maior que X
-```
-
-O objetivo científico seria medir se um aumento de 10×, 100× ou mais na capacidade total gera ganhos úteis mantendo:
-
-```text
-active compute
-resident bytes
-bandwidth/token
-```
-
-sob controle.
-
----
-
-# 86. Potencial impacto sobre a fronteira da IA
-
-Se a arquitetura funcionar em escala, os limites de frontier models podem mudar.
-
-Hoje um limite importante é:
-
-> quanto do modelo pode ser treinado e servido economicamente próximo do compute?
-
-Em GSNA, a pergunta passa a ser:
-
-> quanto de capacidade conseguimos endereçar eficientemente por meio de um working set limitado?
-
-Isso poderia incentivar modelos com:
-
-- muito mais especializações;
-- grandes bibliotecas neurais;
-- capacidades de domínio profundas;
-- crescimento incremental;
-- memória persistente extensa;
-- compute adaptativo.
-
----
-
-# 87. Um novo tipo de scaling law
-
-Scaling tradicional observa relações entre:
-
-```text
-parameters
-data
-compute
-loss
-```
-
-GSNA adiciona variáveis:
-
-```text
-total capabilities
-active capabilities
-resident capabilities
-bytes/token
-routing depth
-cache reuse
-index size
-storage latency
-```
-
-Uma questão científica nova seria:
-
-\[
-Quality
-=
-f(
-TotalCapacity,
-ActiveCapacity,
-ResidentCapacity,
-IO,
-Routing,
-Data,
-Compute
-)
-\]
-
-Descobrir essa função pode ser tão importante quanto construir a arquitetura.
-
----
-
-# 88. Meta de longo prazo
-
-A meta não é simplesmente:
-
-> rodar um modelo de 2 TB em 1 GB.
-
-Uma formulação mais rigorosa é:
-
-> **construir uma arquitetura na qual um working set pequeno possa navegar e utilizar corretamente um espaço de capacidade muitas ordens de magnitude maior, pagando principalmente pelo que é realmente ativado.**
-
-Isso preserva os limites físicos.
-
-E transforma a maneira como capacidade é organizada.
-
----
-
-# 89. Programa experimental
-
-A pesquisa deve avançar incrementalmente.
-
-## Fase 0 — Formalização
+**Status:** OPEN / BLOCKING.
 
 Definir:
 
-- microcore;
-- state representation;
-- Capability Node contract;
-- Capability Address Space;
-- hierarchical router;
-- loss;
-- budgets;
-- métricas.
+- dimensão do estado;
 
-## Fase 1 — Graph LM mínimo
+- número de streams de estado;
 
-Tudo residente.
+- mecanismo temporal;
 
-Provar linguagem.
+- forma de read;
 
-## Fase 2 — Sparse Capability Graph
+- forma de commit;
 
-Aumentar capacidade mantendo ativação pequena.
+- como múltiplas branches escrevem de volta;
 
-## Fase 3 — Adaptive Compute
+- state reset;
 
-Treinar stop/continue.
+- estado por sequência durante batching.
 
-## Fase 4 — Hierarchical Capability Addressing
+O FSF pode compartilhar componentes com o backbone do RNC.
 
-Provar navegação sem índice monolítico.
+## D-005 — Forma do State Packet
 
-## Fase 5 — Simulated Budget Training
+**Status:** OPEN / BLOCKING.
 
-Variar RAM, bandwidth e compute.
+Candidatos:
 
-## Fase 6 — Physical Paging
+- vetor \[d\];
 
-Mover capabilities para storage.
+- pequeno conjunto \[m,d\];
 
-## Fase 7 — Predictive Prefetch
+- vetor + recurrent state;
 
-Treinar previsão de futuras capacidades.
+- vetor + janela local limitada;
 
-## Fase 8 — Hardware-Aware Routing
+- múltiplos canais tipados.
 
-Incorporar custos físicos reais.
+O State Packet precisa ser pequeno o bastante para transporte barato e rico o bastante para não se tornar gargalo informacional.
 
-## Fase 9 — Sparse Training State
+## D-006 — Primitive de Capability Node
 
-Paginar optimizer state e gradientes.
+**Status:** OPEN / BLOCKING.
 
-## Fase 10 — Page-Major Training
+Baseline recomendado para a primeira implementação:
 
-Reordenar execução de treino por módulos.
+    Norm
+     -> Linear / gated expansion
+     -> activation
+     -> projection
+     -> residual
 
-## Fase 11 — Multiresolution Capabilities
+ou equivalente SwiGLU residual.
 
-Adicionar níveis de precisão/fidelidade.
+Razões:
 
-## Fase 12 — Memory Graph
+- shape uniforme;
 
-Adicionar conhecimento persistente explícito.
+- fácil batching;
 
-## Fase 13 — Structural Growth
+- gradiente simples;
 
-Investigar spawn/split/merge/prune.
+- implementação eficiente;
 
-## Fase 14 — Large-Scale Fabric
+- permite medir o valor do grafo antes de introduzir nodes heterogêneos.
 
-Validar distribuição entre múltiplos tiers e máquinas.
+Depois podem ser testados:
 
----
+- tiny SSM;
 
-# 90. Primeiro milestone
+- tiny attention;
 
-O primeiro milestone deve ser pequeno e brutalmente verificável:
+- low-rank specialists;
 
-> **Um GSNA residente consegue competir com um baseline de tamanho semelhante enquanto ativa significativamente menos parâmetros por passo.**
+- convolutional/gated nodes;
 
-Sem isso, não há motivo para implementar paging.
+- multimodal nodes.
 
----
+## D-007 — Granularidade de node/page
 
-# 91. Segundo milestone
+**Status:** OPEN / NON-BLOCKING para Graph LM residente; BLOCKING para paging.
 
-> **Aumentar o Capability Graph melhora qualidade sem crescimento proporcional de active parameters.**
+Testar faixas de parâmetros e bytes.
 
-Esse resultado prova sparsity útil.
+A unidade neural e a página física não precisam ser idênticas.
 
----
+Questões:
 
-# 92. Terceiro milestone
+- um node pode ocupar múltiplas pages?
 
-> **Mover a maioria das capabilities para storage preserva qualidade e mantém I/O controlável.**
+- múltiplos nodes podem compartilhar uma page?
 
-Esse resultado prova residency sparsity.
+- qual é o custo de metadata?
 
----
+- qual o desperdício por miss?
 
-# 93. Quarto milestone
+- qual o efeito sobre batching?
 
-> **Um checkpoint treinado sob Resource Dropout funciona em múltiplas classes de hardware.**
+## D-008 — Algoritmo de routing diferenciável
 
-Esse resultado prova elasticidade.
+**Status:** OPEN / BLOCKING.
 
----
+Baseline recomendado para testar primeiro:
 
-# 94. Quinto milestone
+1.  soft routing no warmup;
 
-> **O total training state excede a RAM disponível sem exigir sua residência simultânea.**
+2.  annealing de temperatura;
 
-Esse resultado prova a viabilidade do caminho de treinamento escalável.
+3.  top-k esparso;
 
----
+4.  auxiliary load-balance loss;
 
-# 95. A visão
+5.  entropy floor;
 
-A GSNA propõe que inteligência neural deixe de ser vista apenas como:
+6.  exploration controlada;
 
-```text
-uma enorme função
-```
+7.  hard cap de utilização por frontier.
 
-e passe a ser organizada como:
+Ainda precisa decidir como o gradiente atravessa a seleção discreta.
 
-```text
-microcore
-+
-estado
-+
-espaço de endereçamento
-+
-grafo de capacidades
-+
-memória
-+
-roteamento
-+
-runtime
-+
-budget físico
-```
+Candidatos:
 
-A capacidade total pode ser enorme.
+- straight-through estimator;
 
-A atividade instantânea permanece pequena.
+- Gumbel-style relaxation;
 
-O índice total pode crescer.
+- routing supervision auxiliar;
 
-A parte residente do índice permanece seletiva.
+- distillation de soft router para hard router.
 
-Conhecimento pode crescer.
+## D-009 — Granularidade temporal do routing
 
-O contexto permanece limitado.
+**Status:** OPEN / BLOCKING.
 
-Uma tarefa simples utiliza poucos recursos.
+A semântica lógica preferida é **token-state specific routing**.
 
-Uma tarefa difícil pode percorrer regiões maiores.
+Entretanto, execução física pode agrupar muitos State Packets que escolheram o mesmo node.
 
-Um computador pequeno pode acessar um sistema muito maior do que sua RAM.
+Isso separa:
 
-Um computador grande pode usar sua memória rápida como working set de um sistema ainda maior.
+    logical routing granularity = por estado/token
+    physical batching           = por frontier/node
 
----
+Testes devem comparar routing por:
 
-# 96. Hipótese final
+- token;
 
-A hipótese final da GSNA é:
+- microchunk;
 
-> **O limite útil de uma inteligência neural não precisa ser determinado pela quantidade de parâmetros que podem permanecer simultaneamente em RAM ou VRAM.**
+- chunk;
 
-Se parâmetros, capacidades, memória e índices puderem ser endereçados hierarquicamente; se apenas um subgrafo pequeno precisar ser materializado; se o routing aprender localidade e previsibilidade; e se o treinamento incorporar explicitamente os custos físicos da máquina, então:
+- híbrido.
 
-\[
-TotalCapacity
-\]
+## D-010 — Edge semantics
 
-pode crescer muito mais rapidamente que:
+**Status:** OPEN / BLOCKING.
 
-\[
-ResidentCapacity
-\]
+A v0.3 favorece duas classes de arestas:
 
-e potencialmente também mais rapidamente que:
+1.  **local direct edges**, usadas para transições frequentes entre capabilities relacionadas;
 
-\[
-Compute/token
-\]
+2.  **global gateway transitions**, usadas para saltar para regiões distantes.
 
-e:
+Uma formulação candidata:
 
-\[
-Bytes/token
-\]
+\[ Candidates(v_k)=Neighbors(v_k)Gateways(h_k) \]
 
-A consequência possível é uma nova classe de sistemas neurais:
+Isso reduz a necessidade de consultar um router global contra todos os nodes a cada passo.
 
-```text
-pequenos no estado ativo
-grandes no espaço de capacidade
-adaptáveis ao hardware
-modulares
-pagináveis
-expansíveis
-```
+## D-011 — Router local versus router global
 
----
+**Status:** OPEN / BLOCKING.
 
-# 97. Princípio fundador
+Uma implementação candidata:
 
-A GSNA pode ser resumida em uma única afirmação:
+    State Packet
+       |
+       +--> local route head on current node
+       |
+       +--> global route head on RNC/route index when needed
 
-> **O tamanho da inteligência disponível não deveria ser determinado pelo tamanho do seu working set físico.**
+O objetivo é que a maioria das transições maduras seja local e previsível, usando o roteamento global apenas quando necessário.
 
-Ou, formalmente:
+Pergunta:
 
-\[
-\boxed{
-SystemCapacity
-\neq
-ActiveComputation
-\neq
-ResidentMemory
-}
-\]
+que fração de steps pode permanecer em rotas locais sem perder capacidade de recombinação global?
 
-O desafio científico é descobrir até onde essa separação pode ser levada sem perder qualidade, velocidade ou capacidade de aprendizado.
+## D-012 — Fan-out e integração
 
-Se a resposta for suficientemente longe, a relação entre IA e hardware pode mudar de forma fundamental.
+**Status:** OPEN / BLOCKING.
+
+Primeiro baseline recomendado:
+
+- top-k pequeno;
+
+- máximo de 2 branches em paralelo;
+
+- weighted residual merge;
+
+- hard max de fan-out.
+
+A integração pode começar como:
+
+\[ h’ = h + \_{i A} w_i_i(h) \]
+
+com:
+
+\[ \_i w_i = 1 \]
+
+Depois testar integração sequencial, learned merge e Integration Nodes especializados.
+
+## D-013 — Stop / continue
+
+**Status:** OPEN / NON-BLOCKING para primeira versão.
+
+Primeiro protótipo pode usar número máximo fixo de graph steps.
+
+Depois introduzir:
+
+\[ P(stop\|h_k) \]
+
+com:
+
+- hard max;
+
+- compute penalty;
+
+- threshold;
+
+- minimum steps;
+
+- target de estabilidade.
+
+## D-014 — Commit para Fast Temporal State
+
+**Status:** OPEN / BLOCKING.
+
+Esse é um dos contratos mais importantes.
+
+É necessário decidir quais informações produzidas pelo Capability Graph alteram (H_t), o estado usado pelos tokens futuros.
+
+Questões:
+
+- commit somente após terminar a trajetória?
+
+- commits intermediários são permitidos?
+
+- branches podem escrever em paralelo?
+
+- existe gating de commit?
+
+- como evitar overwrite destrutivo?
+
+- como impedir leakage de informação futura em treino paralelo?
+
+## D-015 — Causalidade formal
+
+**Status:** OPEN / BLOCKING.
+
+Precisamos provar por testes e invariantes que:
+
+\[ logits_t x\_{t+1:} \]
+
+Nenhuma otimização de frontier, grouping, Memory Graph, cache ou training batch pode quebrar essa propriedade.
+
+O repositório deve ter testes de causal masking/leakage desde o primeiro protótipo.
+
+## D-016 — Shared embeddings e LM head
+
+**Status:** OPEN / BLOCKING para fechar o budget de 128 MB.
+
+Decidir:
+
+- embeddings fazem parte do RNC?
+
+- LM head fica residente?
+
+- input embedding e output projection compartilham pesos?
+
+- vocabulário grande consome budget demais?
+
+- projeção do vocabulário pode usar estratégia fatorada?
+
+Essa decisão pode consumir grande fração dos 128 MB e precisa ser tratada cedo.
+
+## D-017 — Hierarchical router
+
+**Status:** OPEN / NON-BLOCKING em escala pequena.
+
+O protótipo pode usar router flat.
+
+Quando nodes crescerem para milhares ou milhões, será necessário:
+
+    domain / region
+       -> cluster
+          -> local neighborhood
+             -> node
+
+O custo do índice de routing também precisa ser contado em bytes residentes.
+
+## D-018 — RNC-only fallback
+
+**Status:** OPEN / NON-BLOCKING.
+
+Definir comportamento quando:
+
+- graph budget é zero;
+
+- node solicitado está indisponível;
+
+- page falha integridade;
+
+- latência excede budget;
+
+- storage está indisponível.
+
+Preferência: fail-closed para corrupção e degradação semântica explícita para ausência de capacidade, sem substituição silenciosa de node.
+
+## D-019 — Layout físico
+
+**Status:** OPEN / DEFERRED até prova residente.
+
+Definir:
+
+- node-to-file mapping;
+
+- shard size;
+
+- adjacency-aware packing;
+
+- compaction;
+
+- versioning;
+
+- checksum granularity;
+
+- atomic replacement.
+
+Os invariantes de integridade devem seguir a disciplina já demonstrada no MMB.
+
+## D-020 — Cache policy
+
+**Status:** OPEN / DEFERRED até prova residente.
+
+LRU deve ser baseline.
+
+Depois comparar:
+
+- LRU;
+
+- LFU;
+
+- reuse-distance aware;
+
+- topology-aware;
+
+- route-predicted residency.
+
+Uma política sofisticada só se justifica se telemetria provar benefício.
+
+## D-021 — Prefetch horizon
+
+**Status:** OPEN / DEFERRED até routing estável.
+
+Definir:
+
+- quantos steps futuros prever;
+
+- quantos bytes máximos especular;
+
+- priority;
+
+- cancelamento;
+
+- tratamento de branches.
+
+Prefetch nunca altera semântica. Ele somente antecipa materialização.
+
+## D-022 — Sparse optimizer
+
+**Status:** OPEN / DEFERRED.
+
+Definir:
+
+- materialização de optimizer state;
+
+- persistence;
+
+- staleness;
+
+- writeback;
+
+- batching de updates;
+
+- learning rate para nodes raros;
+
+- checkpoint atômico.
+
+## D-023 — Memory Gateway
+
+**Status:** OPEN / NON-BLOCKING para Graph LM inicial.
+
+Definir interface neural entre State Packet e o Memory Graph herdando:
+
+- identity;
+
+- provenance;
+
+- revision;
+
+- temporal validity;
+
+- bounded recall.
+
+O objetivo é evitar converter toda memória recuperada obrigatoriamente em texto.
+
+## D-024 — Structural growth
+
+**Status:** DEFERRED.
+
+Spawn, split, merge, prune, freeze e retire só entram depois que uma topologia fixa demonstrar capacity scaling.
+
+## D-025 — Multiresolution nodes
+
+**Status:** DEFERRED.
+
+Base + refinements permanece interessante para hardware adaptativo, mas aumenta cedo demais o espaço experimental.
+
+## D-026 — Distributed GSNA
+
+**Status:** DEFERRED.
+
+Primeiro provar em uma máquina.
+
+Depois decidir network placement, remote nodes, replication e consistency.
+
+## D-027 — Curva de Core Scaling
+
+**Status:** OPEN / REQUIRED EXPERIMENT.
+
+Treinar RNCs sob diferentes budgets, por exemplo:
+
+    64 MB
+    128 MB
+    256 MB
+    512 MB
+
+mantendo o Capability Graph fixo.
+
+Pergunta:
+
+quanto de qualidade, routing e integração é ganho por byte residente adicional?
+
+## D-028 — Curva de Capability Scaling
+
+**Status:** OPEN / REQUIRED EXPERIMENT.
+
+Fixar inicialmente:
+
+    RNC = 128 MB
+
+e escalar o grafo:
+
+    1x
+    2x
+    4x
+    8x
+
+mantendo approximately constantes:
+
+- active nodes;
+
+- active FLOPs;
+
+- max graph steps;
+
+- RNC budget.
+
+Pergunta:
+
+capacidade total adicional melhora qualidade sem exigir compute ativo proporcional?
+
+## D-029 — Matriz 2D Core × Graph
+
+**Status:** OPEN / REQUIRED EXPERIMENT após D-027/D-028.
+
+Medir a interação:
+
+| **RNC budget  Capability Graph** | **1x** | **2x** | **4x** | **8x** |
+|----------------------------------|--------|--------|--------|--------|
+| 64 MB                            | teste  | teste  | teste  | teste  |
+| **128 MB**                       | teste  | teste  | teste  | teste  |
+| 256 MB                           | teste  | teste  | teste  | teste  |
+| 512 MB                           | teste  | teste  | teste  | teste  |
+
+Para cada célula registrar:
+
+- validation loss;
+
+- downstream quality;
+
+- routing accuracy/proxy;
+
+- routing entropy;
+
+- route stability;
+
+- node utilization;
+
+- active params/token;
+
+- FLOPs/token;
+
+- state bytes/token;
+
+- resident bytes;
+
+- tokens/s.
+
+Essa matriz responde se existe uma relação como:
+
+G_usable = f(C)
+
+ou se o Capability Graph continua melhorando qualidade quase independentemente do RNC dentro da faixa estudada.
+
+## D-030 — Hardware target mínimo
+
+**Status:** OPEN / NON-BLOCKING.
+
+A arquitetura não deve ser definida por uma máquina específica.
+
+Para o protótipo, é útil escolher uma classe de referência — por exemplo, máquina com 8 GB de RAM — apenas para medir se o RNC-128MB deixa working set suficiente para cache, runtime e estado.
+
+O target é benchmark, não dogma.
+
+# 19. Minimal Graph Language Model — proposta para o primeiro experimento
+
+A v0.3 reduz o primeiro protótipo ao mínimo capaz de falsificar a hipótese neural, mas agora parte explicitamente do **RNC-128MB**.
+
+## 19.1 Componentes
+
+    Tokenizer
+       |
+    Embedding
+       |
+    +-----------------------------+
+    | Resident Neural Core        |
+    | RNCWeightBytes = 128 MB     |
+    |                             |
+    | basal neural capacity       |
+    | Fast State Fabric           |
+    | routing support             |
+    | integration / commit        |
+    +--------------+--------------+
+                   |
+              State Packets
+                   |
+                   v
+              Router / edges
+                   |
+                   v
+           Capability Graph
+           /       |       \
+          v        v        v
+        Node A -> Node B -> Node C
+           \               /
+            +-------------+
+                   |
+                   v
+           Integration / Commit
+                   |
+                   v
+                LM Head
+
+No primeiro protótipo não entram:
+
+- paging físico;
+
+- Memory Graph;
+
+- structural growth;
+
+- multiresolution;
+
+- continual learning;
+
+- distributed runtime;
+
+- sparse optimizer paging.
+
+A intenção é isolar a hipótese neural.
+
+## 19.2 Baseline recomendado
+
+Congelado:
+
+    RNC weights budget:      128 MB
+    routing logic:           token-state specific
+    physical execution:      frontier grouped
+    Capability Node shape:   uniforme no baseline
+    paging:                  disabled
+    Memory Graph:            disabled
+
+Ainda a decidir por D-002..D-016:
+
+    RNC precision
+    effective RNC params
+    hidden dimension
+    Fast State architecture
+    State Packet shape
+    node parameter count
+    number of nodes
+    top-k
+    graph steps
+    embedding/head strategy
+
+## 19.3 Arquitetura de Capability Node baseline
+
+Para reduzir variáveis, o primeiro baseline deve usar uma transformação residual uniforme e simples.
+
+Exemplo conceitual:
+
+\[ z = Norm(h) \]
+
+\[ u = SwiGLU(W_1z,W_gz) \]
+
+\[ (h)=W_2u \]
+
+\[ h’ = h + \_i(h) \]
+
+onde (\_i) pode ser um gate aprendido ou peso de routing.
+
+A escolha exata de ativação pode mudar, mas o princípio é:
+
+o primeiro experimento deve medir o valor do **grafo e do routing**, não o valor de uma família exótica de nodes.
+
+## 19.4 Routing baseline
+
+Fluxo candidato:
+
+    warmup
+      -> soft probabilities over candidates
+      -> high exploration
+
+    anneal
+      -> lower temperature
+      -> load-balance regularization
+
+    sparse phase
+      -> top-k active nodes
+      -> frontier batching
+
+Durante toda a transição medir collapse, utilização e estabilidade.
+
+## 19.5 Objetivo
+
+Responder apenas:
+
+**Um RNC residente de 128 MB consegue produzir estado causal suficiente para navegar por capabilities neurais dinamicamente roteadas e aprender next-token prediction com qualidade competitiva sob compute ativo comparável?**
+
+E, em seguida:
+
+**aumentar o Capability Graph melhora qualidade mantendo RNC, active nodes e FLOPs aproximadamente constantes?**
+
+Se a segunda resposta for negativa, paging não resolve o problema e não deve ser a próxima prioridade.
+
+# 20. Programa experimental 0.3
+
+O programa experimental deve separar claramente **viabilidade neural**, **Core Scaling**, **Capability Scaling** e somente depois **eficiência física**.
+
+## Fase A — RNC-128MB Language Baseline
+
+Treinar o RNC de 128 MB sem Capability Graph ativo ou com graph mínimo.
+
+Objetivo:
+
+estabelecer a qualidade basal do núcleo residente.
+
+Medir:
+
+- validation loss;
+
+- perplexity;
+
+- tokens/s;
+
+- FLOPs/token;
+
+- RNCWeightBytes;
+
+- RNCTotalResidentBytes;
+
+- state bytes/sequence;
+
+- decode latency.
+
+Essa fase responde quanto da qualidade vem do RNC antes de atribuir ganhos ao grafo.
+
+## Fase B — Resident Graph LM
+
+Adicionar Capability Graph inteiramente residente.
+
+Medir:
+
+- validation loss;
+
+- routing entropy;
+
+- node utilization;
+
+- route stability;
+
+- steps/token;
+
+- tokens/s;
+
+- active params/token;
+
+- train FLOPs;
+
+- StateTransportBytes/token.
+
+Baselines mínimos:
+
+    RNC-only
+    Dense Transformer
+    MoE Transformer
+    SSM/recurrent baseline
+    GSNA
+
+O objetivo é provar que o roteamento dinâmico não destrói modelagem de linguagem.
+
+## Fase C — Capability Scaling com RNC fixo
+
+Fixar:
+
+    RNCWeightBytes = 128 MB
+
+Treinar:
+
+    GSNA-1x
+    GSNA-2x
+    GSNA-4x
+    GSNA-8x
+
+mantendo approximately constantes:
+
+- active nodes;
+
+- graph steps;
+
+- active FLOPs/token;
+
+- State Packet shape;
+
+- RNC budget.
+
+Pergunta:
+
+**Aumentar capabilities disponíveis melhora qualidade sem exigir aumento proporcional de compute ativo?**
+
+Essa é a primeira prova estrutural.
+
+## Fase D — Core Scaling com grafo fixo
+
+Fixar um Capability Graph e variar:
+
+    64 MB
+    128 MB
+    256 MB
+    512 MB
+
+Perguntas:
+
+1.  quanto de qualidade vem de aumentar inteligência residente?
+
+2.  routing melhora com core maior?
+
+3.  route stability melhora?
+
+4.  capabilities externas passam a ser melhor utilizadas?
+
+5.  em que ponto o custo residente deixa de compensar?
+
+Métrica conceitual:
+
+\[ CoreScalingEfficiency = {RNCWeightBytes+ActiveFLOPs+Latency} \]
+
+## Fase E — Matriz 2D Core × Graph
+
+Executar a matriz:
+
+| **RNC budget  Graph** | **1x** | **2x** | **4x** | **8x** |
+|-----------------------|--------|--------|--------|--------|
+| 64 MB                 | ●      | ●      | ●      | ●      |
+| **128 MB**            | ●      | ●      | ●      | ●      |
+| 256 MB                | ●      | ●      | ●      | ●      |
+| 512 MB                | ●      | ●      | ●      | ●      |
+
+A matriz deve usar seeds e budgets de treino controlados.
+
+Perguntas:
+
+- um RNC pequeno deixa de aproveitar graphs grandes?
+
+- um graph grande compensa um RNC menor?
+
+- existe fronteira de Pareto entre bytes residentes e capacidade externa?
+
+- quais pares oferecem melhor qualidade por custo?
+
+- existe interação forte G_usable = f(C)?
+
+O resultado esperado não é uma resposta universal. É um mapa experimental.
+
+## Fase F — Routing Granularity
+
+Comparar:
+
+    per-token state routing
+    microchunk routing
+    chunk routing
+    hybrid routing
+
+sem alterar o resto da arquitetura.
+
+Medir:
+
+- quality;
+
+- route diversity;
+
+- batching efficiency;
+
+- tokens/s;
+
+- steps/token;
+
+- frontier fragmentation.
+
+## Fase G — Simulated Residency Budget
+
+Ainda sem SSD real.
+
+Simular diferentes budgets para Capability Nodes:
+
+    small
+    medium
+    large
+    full resident
+
+Introduzir:
+
+- cache state;
+
+- locality cost;
+
+- page miss penalty;
+
+- Resource Dropout.
+
+Não confundir esse budget com os 128 MB de pesos do RNC.
+
+Pergunta:
+
+**o mesmo checkpoint aprende trajetórias diferentes sob budgets físicos diferentes sem colapsar qualidade?**
+
+## Fase H — Physical Paging
+
+Somente depois das fases anteriores.
+
+Reutilizar princípios já demonstrados no MMB:
+
+- parameter store;
+
+- checksums;
+
+- leases;
+
+- cache;
+
+- pin;
+
+- atomic commit;
+
+- telemetry;
+
+- fail-closed.
+
+Medir:
+
+    ParameterBytesFetched/token
+    blocking_bytes/token
+    StateTransportBytes/token
+    cache hit ratio
+    evictions
+    page faults
+    prefetched bytes/token
+    latency
+
+## Fase I — Predictive Prefetch
+
+Adicionar previsão de futuras capabilities.
+
+Objetivo:
+
+transformar rota semanticamente estável em rota fisicamente previsível.
+
+## Fase J — Sparse Training State
+
+Paginar weights, gradients e optimizer state de nodes não ativos.
+
+A prova é:
+
+\[ TrainingState\_{resident}TrainingState\_{total} \]
+
+sem perda catastrófica de throughput ou convergência.
+
+## Fase K — Memory Graph
+
+Integrar Eyle Memory Graph por Memory Gateway.
+
+Testar:
+
+- factual recall;
+
+- temporal update;
+
+- contradiction;
+
+- provenance;
+
+- revision;
+
+- long-horizon memory;
+
+- bounded active memory.
+
+## Fase L — Structural Growth
+
+Somente após as fases anteriores:
+
+- spawn;
+
+- split;
+
+- merge;
+
+- prune;
+
+- freeze;
+
+- retire.
+
+# 21. Gates de realidade
+
+A GSNA só avança de fase quando cumprir gates explícitos.
+
+## Gate 1 — Language
+
+GSNA aprende next-token prediction sem depender de uma pilha Transformer completa como caminho principal.
+
+## Gate 2 — Routing
+
+Não existe routing collapse destrutivo e a utilização efetiva de nodes permanece mensurável.
+
+## Gate 3 — Capacity
+
+Aumentar capacidade total melhora validation loss mantendo active compute aproximadamente estável.
+
+## Gate 4 — Locality
+
+Sob budget simulado, a rede reduz miss cost/bytes sem sacrificar desproporcionalmente qualidade.
+
+## Gate 5 — Physical Paging
+
+Grande parte do Parameter Graph pode ficar não residente com degradação controlada.
+
+## Gate 6 — Budget Adaptation
+
+O mesmo modelo opera sob múltiplos budgets e degrada gradualmente.
+
+## Gate 7 — Sparse Training State
+
+Estado total de treinamento excede o estado residente sem inviabilizar convergência.
+
+## Gate 8 — Memory
+
+Memory Graph cresce sem crescimento proporcional do estado neural/contextual ativo.
+
+# 22. Métricas obrigatórias
+
+## Qualidade
+
+    validation loss
+    perplexity
+    reasoning
+    coding
+    factuality
+    memory tasks
+
+## Roteamento
+
+    routing entropy
+    node utilization
+    top-k concentration
+    route stability
+    route depth
+    branch count
+    router confidence
+
+## Compute
+
+    FLOPs/token
+    active params/token
+    steps/token
+    tokens/s
+    batch occupancy
+    frontier fragmentation
+
+## Residência
+
+    resident parameters
+    resident bytes
+    peak resident bytes
+    active/resident ratio
+
+## I/O
+
+    logical bytes/token
+    physical bytes/token
+    blocking bytes/token
+    prefetched bytes/token
+    page faults/token
+
+## Cache
+
+    hit ratio
+    reuse distance
+    evictions
+    hotset size
+
+## Treinamento
+
+    optimizer resident bytes
+    gradient resident bytes
+    nodes updated/batch
+    I/O/optimizer step
+    route-frequency distribution
+
+## Memória
+
+    recall precision
+    useful recall
+    revision correctness
+    provenance preservation
+    temporal consistency
+    active memory bytes/token
+
+# 23. Falhas que falsificariam a hipótese
+
+A GSNA deve definir condições sob as quais a ideia central é considerada não suportada.
+
+A hipótese enfraquece fortemente se:
+
+1.  aumentar o número total de nodes não melhora qualidade com active compute fixo;
+
+2.  o router só mantém qualidade utilizando grande fração dos nodes;
+
+3.  rotas úteis possuem baixa localidade intrínseca;
+
+4.  o Fast State Fabric precisa crescer proporcionalmente ao Capability Graph;
+
+5.  frontier scheduling destrói GPU utilization;
+
+6.  paging real consome a maior parte da latência mesmo após treinamento hardware-aware;
+
+7.  budgets pequenos provocam falha abrupta em vez de degradação gradual;
+
+8.  especialização não emerge e os nodes convergem para redundância;
+
+9.  o modelo precisa reintroduzir uma grande stack fixa para manter qualidade;
+
+10. a complexidade de routing supera a economia obtida pela sparsity.
+
+Resultados negativos nesses pontos são valiosos: eles indicam onde a hipótese de desacoplamento deixa de ser válida.
+
+# 24. Riscos científicos centrais
+
+## 24.1 Routing collapse
+
+Poucos nodes dominam e os demais deixam de aprender.
+
+Mitigações candidatas:
+
+- soft warmup;
+
+- load-balance loss;
+
+- entropy floor;
+
+- exploration;
+
+- capacity caps;
+
+- monitoring por frontier.
+
+## 24.2 Router search problem
+
+A capacidade total pode crescer mais rápido que a capacidade do sistema de encontrar a região correta.
+
+Isso pode gerar:
+
+\|Gₚ\| ↑ sem Quality ↑
+
+O hierarchical router, local edges e routing keys tentam atacar esse problema, mas a curva real precisa ser medida.
+
+## 24.3 RNC capacity mismatch
+
+O risco não é “o RNC crescer e violar a arquitetura”.
+
+O risco correto é escolher um RNC inadequado para o tamanho e a dificuldade do grafo.
+
+RNC pequeno demais:
+
+- estado pobre;
+
+- routing ruim;
+
+- integração fraca;
+
+- graph subutilizado.
+
+RNC grande demais:
+
+- custo residente alto;
+
+- compute basal excessivo;
+
+- menor vantagem relativa do Capability Graph.
+
+A matriz 2D Core × Graph existe precisamente para localizar essa fronteira.
+
+## 24.4 State bottleneck
+
+O Fast State Fabric pode comprimir contexto demais e se tornar o verdadeiro limite de capacidade.
+
+Sinais:
+
+- aumento do graph não melhora loss;
+
+- aumento do State Packet melhora muito mais que adicionar nodes;
+
+- long-context degrada cedo;
+
+- routing fica instável em sequências longas.
+
+## 24.5 Graph fragmentation
+
+Muitos nodes pequenos podem criar overhead maior que o compute economizado.
+
+Precisamos medir:
+
+\[ RoutingCost + SchedulingCost + StateTransportCost \]
+
+contra o compute evitado.
+
+## 24.6 I/O domination
+
+A rede pode aprender sparsity sem aprender locality.
+
+Esse risco já é motivado diretamente pelos limites observados no MMB.
+
+Métrica crítica:
+
+\[ ParameterBytesFetched/token \]
+
+e não apenas active parameters.
+
+## 24.7 Serial-depth latency
+
+Trajetórias longas criam dependência serial.
+
+Mesmo com menos FLOPs:
+
+\[ Latency\_{GSNA} \]
+
+pode ser maior que um baseline altamente paralelo.
+
+Stop/continue, fan-out limitado e edges locais precisam ser medidos contra esse risco.
+
+## 24.8 Frontier fragmentation
+
+Cada State Packet pode pedir um node diferente, reduzindo batching.
+
+Frontier scheduling tenta recuperar paralelismo agrupando requests por node sem mudar a rota lógica.
+
+## 24.9 Catastrophic routing change
+
+Pequenas mudanças de weights podem alterar caminhos inteiros.
+
+Possíveis mitigações:
+
+- route consistency regularization;
+
+- router EMA;
+
+- slow router updates;
+
+- distillation;
+
+- hysteresis de route priors.
+
+## 24.10 Sparse optimizer drift
+
+Nodes raros deixam de acompanhar a distribuição.
+
+Esse problema pode aparecer antes mesmo de optimizer paging.
+
+Monitorar:
+
+- update frequency;
+
+- gradient age;
+
+- effective learning rate;
+
+- utilization.
+
+## 24.11 RNC dominates quality
+
+Pode ocorrer de quase todo ganho vir do aumento do RNC e o Capability Graph adicionar pouco.
+
+Esse resultado não deve ser escondido.
+
+Ablations obrigatórias:
+
+    RNC only
+    RNC + graph
+    larger RNC with same total active compute
+    smaller RNC + larger graph
+
+Se um RNC maior vencer consistentemente um graph maior sob custo comparável, a hipótese de capability scaling precisa ser revisada.
+
+## 24.12 Graph capacity exists but is not addressable
+
+O sistema pode possuir milhares de nodes úteis, mas o router não consegue encontrá-los de forma confiável.
+
+Métrica candidata:
+
+\[ AddressableCapacityEfficiency = {TotalCapability} \]
+
+Ela não possui unidade universal; serve como conceito para comparar incrementos de capacidade.
+
+Também medir uma curva de saturação:
+
+    graph size -> quality gain
+
+Se ela achatar cedo, descobrir se o limite está no router, State Packet, node primitive ou dados de treinamento.
+
+# 25. Estratégia de implementação
+
+A implementação deve seguir a disciplina aprendida com Eyle e MMB:
+
+**primeiro definir autoridade, contratos e métricas; depois otimizar gargalos medidos.**
+
+Ordem recomendada:
+
+    1. congelar accounting do RNC-128MB
+    2. congelar D-002..D-016 bloqueantes
+    3. implementar RNC-only baseline
+    4. implementar Graph LM residente
+    5. instrumentar routing/frontier/state transport
+    6. provar Capability Scaling com RNC fixo em 128 MB
+    7. medir Core Scaling
+    8. executar matriz 2D Core x Graph
+    9. simular budgets de residência
+    10. introduzir paging real
+    11. otimizar somente gargalos demonstrados
+    12. integrar Memory Graph
+    13. explorar sparse training state
+    14. somente então crescimento estrutural
+
+## 25.1 Arquitetura de software recomendada
+
+Separar módulos desde o primeiro commit:
+
+    gsna/
+      model/
+        rnc/
+        fast_state/
+        capability_node/
+        router/
+        integration/
+        lm_head/
+
+      graph/
+        registry/
+        topology/
+        routing_keys/
+        scheduler/
+
+      runtime/
+        resident_executor/
+        telemetry/
+        budget/
+        paging/          # inicialmente interface/stub
+
+      memory/
+        gateway/         # inicialmente interface/stub
+
+      training/
+        losses/
+        routing_schedule/
+        experiments/
+        checkpoints/
+
+      tests/
+        causality/
+        routing/
+        state/
+        graph/
+        accounting/
+
+O objetivo é impedir que o primeiro protótipo misture semântica neural, runtime físico e experimentação no mesmo módulo.
+
+## 25.2 Interfaces mínimas
+
+### RNC
+
+    encode(token, temporal_state) -> StatePacket
+    commit(StatePacket)           -> temporal_state'
+    project(StatePacket)          -> logits
+
+### Capability Node
+
+    forward(StatePacket) -> StatePacketDelta
+
+### Router
+
+    route(StatePacket, current_node, budget, topology)
+        -> RouteDecision
+
+### Scheduler
+
+    group(RouteDecision[])
+        -> NodeFrontiers
+
+### Runtime
+
+    resolve(node_id)
+    execute(frontier)
+    record(telemetry)
+
+Esses contratos devem permanecer independentes do mecanismo concreto escolhido no primeiro benchmark.
+
+## 25.3 Testes unitários que devem existir antes de treinar
+
+- nenhum acesso causal ao futuro;
+
+- identidade de node estável;
+
+- route decision determinística quando stochasticity está desligada;
+
+- residual node preserva shape;
+
+- frontier grouping não altera resultado;
+
+- integração é independente da ordem quando declarada comutativa;
+
+- budget hard limit é respeitado;
+
+- bytes accounting fecha;
+
+- RNCWeightBytes não ultrapassa o baseline sem erro explícito;
+
+- unavailable node não é substituído silenciosamente;
+
+- checksum failure é fail-closed quando paging entrar.
+
+## 25.4 Instrumentação desde o primeiro dia
+
+Registrar por batch e por token:
+
+    rnc_weight_bytes
+    rnc_total_resident_bytes
+    state_transport_bytes
+    active_nodes
+    active_params
+    graph_steps
+    routing_entropy
+    node_utilization
+    frontier_size
+    route_changes
+    train_flops
+    tokens_per_second
+
+Quando paging entrar:
+
+    parameter_bytes_fetched
+    blocking_bytes
+    prefetch_bytes
+    page_faults
+    cache_hits
+    cache_misses
+    io_wait
+
+A GSNA não deve repetir o erro de descobrir tarde que uma otimização não move o gargalo real.
+
+# 26. Arquitetura-alvo consolidada
+
+                                  GSNA
+                                   |
+                        Resident Neural Core
+                             RNC-128MB*
+              +--------------------+---------------------+
+              |                    |                     |
+              v                    v                     v
+       basal language        Fast State Fabric     routing support
+          capacity           temporal state         integration
+              |                    |
+              |                    v
+              |               State Packets
+              |                    |
+              +--------------------+------------------------------+
+                                                                   |
+                                                                   v
+                                                            Capability Graph
+                                                      +------------+------------+
+                                                      |            |            |
+                                                      v            v            v
+                                                    Node A -----> Node B -----> Node C
+                                                      |            |             |
+                                                      +-------> Node D <---------+
+                                                                   |
+                                                                   v
+                                                            Integration / Commit
+                                                                   |
+                                          +------------------------+------------------+
+                                          |                                           |
+                                          v                                           v
+                                    Fast State update                           Memory Gateway
+                                          |                                           |
+                                          v                                           v
+                                       LM Head                                  Memory Graph
+                                                                               provenance
+                                                                               revision
+                                                                               temporal state
+
+\* RNC-128MB é o baseline inicial de RNCWeightBytes, não um limite arquitetural.
+
+## Control and data flow
+
+A arquitetura não separa rigidamente “control plane” e “data plane” em duas máquinas isoladas.
+
+A distinção é funcional:
+
+- decisões de rota, budget e materialização são **controle**;
+
+- State Packets seguindo edges e sendo transformados são **fluxo neural de dados**.
+
+Um node pode produzir informação para o próximo node sem voltar ao RNC.
+
+## Physical execution
+
+    RouteDecision / node_id
+            |
+            v
+    Node Registry
+            |
+            v
+    Residency Manager
+       /             \
+    resident       non-resident
+       |               |
+       |          Parameter Store
+       |               |
+       +-------- cache / pin / lease
+                       |
+                       v
+                     compute
+                       |
+                       v
+                   StatePacket'
+
+## Hierarquia de residência esperada
+
+    always resident
+    --------------
+    RNC weights
+    Fast State
+    routing index básico
+    runtime crítico
+
+    cached / budget dependent
+    -------------------------
+    Capability Nodes
+    routing clusters
+    specialized integration nodes
+
+    persistent / external
+    ---------------------
+    cold capabilities
+    optimizer state futuro
+    Memory Graph storage
+    historical state
+
+O objetivo físico não é manter tudo fora da RAM.
+
+É manter residente aquilo cujo valor por byte justifica residência.
+
+# 27. Relação com arquiteturas existentes
+
+## Transformer
+
+Transformer mantém uma forte estrutura de layers e utiliza attention para comunicação entre posições.
+
+GSNA não exige uma stack fixa de capability layers. Ela separa mecanismo temporal de navegação de capacidades.
+
+## MoE
+
+MoE introduz sparsity de experts, mas normalmente dentro de layers fixas.
+
+GSNA propõe um grafo global com transições dinâmicas, profundidade variável, nodes pagináveis e orçamento físico.
+
+## RAG
+
+RAG recupera informação para o contexto.
+
+GSNA distingue memória explícita de capacidade neural e pode materializar ambos seletivamente.
+
+## GNN
+
+O grafo da GSNA não representa necessariamente entidades externas.
+
+Ele representa a topologia de computação disponível.
+
+## Operating systems
+
+A analogia com memória virtual permanece útil:
+
+    virtual address space -> logical capability space
+    pages                 -> capability nodes
+    page table            -> node registry
+    pager                  -> residency manager
+    scheduler              -> frontier scheduler
+    cache                  -> resident capability cache
+
+A diferença é que a política neural pode aprender a produzir padrões de acesso melhores.
+
+# 28. O que não deve ser prometido
+
+A GSNA 0.3 não promete:
+
+- rodar arbitrariamente muitos parâmetros com RAM constante;
+
+- custo estritamente constante em escala infinita;
+
+- substituir Transformers em todas as tarefas;
+
+- tornar SSD equivalente a VRAM;
+
+- criar especialização perfeita automaticamente;
+
+- continual learning sem forgetting;
+
+- crescimento estrutural estável;
+
+- treinamento de trilhões de parâmetros em hardware doméstico.
+
+A afirmação científica é mais restrita:
+
+**Existe a possibilidade de que capacidade total cresça mais rapidamente que compute ativo, memória residente e bandwidth por token quando a arquitetura é treinada para endereçar seletivamente capacidades e memória.**
+
+Essa possibilidade precisa ser medida.
+
+# 29. Primeiro marco realmente convincente
+
+Um resultado estrutural forte seria:
+
+    GSNA-1x
+    total capacity      100M
+    active parameters    25M
+    resident parameters 100M
+    validation loss       L1
+
+    GSNA-2x
+    total capacity      200M
+    active parameters   ~25M
+    validation loss     < L1
+
+    GSNA-4x
+    total capacity      400M
+    active parameters   ~25M
+    validation loss     < L2
+
+    GSNA-8x
+    total capacity      800M
+    active parameters   ~25M
+    validation loss     < L4
+
+Depois, repetir com residency limitada:
+
+    resident bytes      aproximadamente constantes
+    bytes/token         aproximadamente limitados
+    quality             continua melhorando com capacidade total
+
+Se essa curva existir, a GSNA possui evidência de que a capacidade externa está realmente sendo utilizada.
+
+# 30. Princípio fundador revisado
+
+A genealogia completa passa a ser:
+
+### Eyle
+
+Como possuir memória crescente sem colocar toda memória no contexto?
+
+**Resposta:** memória endereçável e materialização seletiva.
+
+### MiniMaxBrain
+
+Como possuir mais parâmetros do que cabem simultaneamente na RAM?
+
+**Resposta:** parâmetros endereçáveis, pagináveis, verificáveis e reutilizáveis.
+
+### Limite encontrado
+
+O que acontece quando o runtime já foi extensivamente otimizado, mas o próprio modelo continua produzindo um padrão de acesso fisicamente ruim?
+
+**Resposta:** otimização externa deixa de ser suficiente.
+
+### GSNA
+
+E se a própria rede for construída e treinada para que estado, capacidade, memória e compute sejam endereçáveis?
+
+**Resposta proposta:** Resident Neural Core + Fast State Fabric + Capability Graph + Memory Graph + routing treinável + runtime paginado.
+
+A versão 0.3 acrescenta uma correção importante:
+
+**desacoplar capacidade externa não exige minimizar artificialmente a inteligência residente.**
+
+O princípio não é:
+
+\|C\| ≈ constante
+
+O princípio é:
+
+\|C\| ⟂arch \|Gₚ\|
+
+ou, em linguagem direta:
+
+**o RNC e o Capability Graph podem escalar em ritmos diferentes.**
+
+Isso cria três eixos independentes de projeto:
+
+\[ ResidentIntelligence \]
+
+\[ AddressableCapability \]
+
+\[ ActiveComputation \]
+
+A GSNA existe para descobrir como combinar esses três eixos sob hardware real.
+
+# 31. Hipótese final da versão 0.3
+
+A hipótese científica da GSNA 0.3 é:
+
+**Uma arquitetura neural pode manter um Resident Neural Core cuja escala é escolhida pelo melhor compromisso entre qualidade e custo, enquanto estados neurais percorrem dinamicamente um Capability Graph potencialmente muito maior. Se roteamento, estado, localidade, compute e residência forem aprendidos em conjunto, a capacidade total do sistema pode crescer mais rapidamente que seu working set físico e seu custo ativo por token.**
+
+A primeira configuração de referência é:
+
+\[ RNCWeightBytes=128 \]
+
+Mas a arquitetura não depende desse número.
+
+A pergunta de scaling passa a possuir duas dimensões:
+
+Quality = f(\|C\|, \|Gₚ\|, ActiveCompute, B)
+
+onde:
+
+- (\|C\|) é o tamanho do RNC;
+
+- (\|G_P\|) é o tamanho total do Capability Graph;
+
+- ActiveCompute é a quantidade de capacidade realmente executada;
+
+- \(B\) representa o orçamento físico.
+
+A propriedade que buscamos não é “núcleo constante”.
+
+É:
+
+d\|C\| / d\|Gₚ\| não é imposto pela topologia
+
+não ser imposto pela topologia.
+
+Ou seja, aumentar o graph não deve obrigar aumento proporcional do core, embora experimentos possam mostrar que certos tamanhos de core aproveitam melhor certos tamanhos de graph.
+
+A mudança de perspectiva é:
+
+    não:
+    modelo gigante + otimização para caber
+
+    nem:
+    núcleo mínimo + tudo externo
+
+    mas:
+    inteligência residente dimensionada pelo hardware
+    +
+    capacidade externa endereçável
+    +
+    compute ativo seletivo
+
+O Eyle mostrou como não carregar toda a memória.
+
+O MiniMaxBrain mostrou como não carregar todos os parâmetros.
+
+A GSNA precisa provar a etapa que ainda não existe:
+
+**não executar uma topologia inteira quando somente uma trajetória especializada é necessária — e fazer isso sem perder a capacidade de utilizar um espaço de conhecimento muito maior que o working set ativo.**
+
+# 32. Próximo documento
+
+O próximo documento recomendado é:
+
+    GSNA 0.3 — RNC-128MB Minimal Graph Language Model Specification
+
+Ele deve transformar D-002..D-016 em decisões concretas de implementação.
+
+Deve conter no mínimo:
+
+1.  tokenizer e vocabulário;
+
+2.  accounting exato dos 128 MB;
+
+3.  precisão e número de parâmetros;
+
+4.  arquitetura do RNC;
+
+5.  arquitetura do Fast State Fabric;
+
+6.  State Packet tensor shapes;
+
+7.  Capability Node tensor shapes;
+
+8.  router forward pass;
+
+9.  estratégia de gradiente para routing;
+
+10. topology representation;
+
+11. frontier scheduler;
+
+12. integration/commit;
+
+13. LM head;
+
+14. causal training loop;
+
+15. losses e seus schedules;
+
+16. telemetry schema;
+
+17. checkpoints;
+
+18. testes de causalidade;
+
+19. baseline RNC-only;
+
+20. baseline Dense/MoE/SSM;
+
+21. experimento Capability Scaling 1x/2x/4x/8x;
+
+22. experimento Core Scaling 64/128/256/512 MB;
+
+23. matriz 2D Core × Graph;
+
+24. acceptance gates para avançar para paging físico.
+
+Esse documento deve ser suficientemente concreto para que dois engenheiros independentes implementem o mesmo modelo sem precisar reinterpretar o whitepaper.
+
+# Apêndice A — O que é herdado e o que é novo
+
+| **Componente**                           | **Origem principal** | **Situação na GSNA 0.3**                                             |
+|------------------------------------------|----------------------|----------------------------------------------------------------------|
+| Memory Graph                             | Eyle                 | Herdado conceitualmente e reutilizável                               |
+| Bounded context materialization          | Eyle                 | Herdado                                                              |
+| Capability registry/contracts            | Eyle                 | Adaptado para nodes neurais                                          |
+| Separation semantic/mechanical authority | Eyle                 | Herdado como invariante                                              |
+| Parameter paging                         | MiniMaxBrain         | Herdado                                                              |
+| Cache / residency                        | MiniMaxBrain         | Herdado                                                              |
+| Leases / pin during compute              | MiniMaxBrain         | Herdado                                                              |
+| Integrity / fail-closed                  | MiniMaxBrain         | Herdado                                                              |
+| Native physical telemetry                | MiniMaxBrain         | Herdado                                                              |
+| Dynamic compute graph                    | GSNA v0.1            | Núcleo da arquitetura                                                |
+| Neural Microcore                         | GSNA v0.2            | Termo histórico; conceito corrigido na v0.3                          |
+| Resident Neural Core (RNC)               | GSNA v0.3            | Terminologia canônica; núcleo residente, dimensionável e não-hub     |
+| RNC-128MB baseline                       | GSNA v0.3            | Primeiro ponto experimental de RNCWeightBytes, não teto arquitetural |
+| Core Scaling × Capability Scaling        | GSNA v0.3            | Eixos independentes de validação                                     |
+| Budget-constrained training              | GSNA v0.2            | Mantido                                                              |
+| Sparse training state                    | GSNA v0.2            | Mantido, fase posterior                                              |
+| Fast State Fabric                        | GSNA v0.3            | Novo componente explícito                                            |
+| State Packet                             | GSNA v0.3            | Novo contrato lógico                                                 |
+| Direct capability edges                  | GSNA v0.3            | Formalizado                                                          |
+| Frontier scheduler                       | GSNA v0.3            | Novo modelo de execução candidato                                    |
+| Temporal commit contract                 | GSNA v0.3            | Nova decisão arquitetural                                            |
+
+# Apêndice B — Fontes de implementação analisadas
+
+## Eyle 2.7.5 Rev4.2.3
+
+Referências principais do pacote:
+
+    docs/memory-kernel.md
+    docs/capability-providers.md
+    docs/nucleus-cognitive-protocol.md
+    eyle/runtime/context_materializer.py
+    eyle/core/context_projection.py
+    eyle/runtime/memory_graph.py
+    eyle/capabilities/registry.py
+
+Essas fontes sustentam as afirmações sobre:
+
+- Memory Graph persistente;
+
+- ausência de projeção automática global;
+
+- budgets de materialização;
+
+- capability contracts;
+
+- registry mecânico;
+
+- separação de autoridade semântica e física.
+
+## MiniMaxBrain 0.4.1
+
+Referências principais do pacote:
+
+    docs/runtime-architecture.md
+    docs/0.4_IMPLEMENTATION_STATUS.md
+    docs/0.4.1_IMPLEMENTATION_STATUS.md
+    MINIMAXBRAIN_0.4_SDD_COMPUTE_BOUND_2TPS_SPEC.md
+    MINIMAXBRAIN_0.4.1_MEASUREMENT_INTEGRITY_SPEC.md
+    native/src/mmb_pager.cpp
+    native/src/mmb_runtime.cpp
+    native/src/mmb_kernel.cpp
+    benchmark-a2.json
+    a2-diagnose.json
+
+Essas fontes sustentam as afirmações sobre:
+
+- router authority;
+
+- paged expert parameters;
+
+- placeholders;
+
+- leases;
+
+- cache;
+
+- atomic paging behavior;
+
+- native instrumentation;
+
+- benchmark e paging bottleneck.
+
+## GSNA
+
+    Graph-State Neural Architecture — White Paper v0.1
+    Graph-State Neural Architecture — White Paper v0.2
+
+A v0.3 preserva a hipótese original da v0.1, incorpora os avanços físicos da v0.2, corrige a interpretação do núcleo como hub/minicore obrigatório e introduz o RNC dimensionável, o Fast State Fabric e os experimentos separados de Core Scaling e Capability Scaling.
+
+# Conclusão
+
+A GSNA não nasceu de uma tentativa abstrata de desenhar uma nova rede.
+
+Ela surgiu de um caminho de engenharia.
+
+Primeiro, o Eyle mostrou que memória crescente não precisa significar contexto crescente.
+
+Depois, o MiniMaxBrain mostrou que capacidade paramétrica crescente não precisa significar residência integral.
+
+A etapa seguinte surgiu quando a otimização chegou ao limite estrutural: o runtime ainda estava tentando adaptar uma arquitetura que não foi criada para esse ambiente.
+
+A GSNA é a tentativa de inverter o problema.
+
+Em vez de perguntar:
+
+**Como fazemos um modelo gigante existente caber e rodar melhor?**
+
+a pergunta passa a ser:
+
+**Como construímos um modelo cuja própria organização neural já assume que somente uma pequena parte da capacidade estará ativa, residente e em trânsito a cada momento?**
+
+A resposta ainda não está demonstrada.
+
+Mas, após Eyle e MiniMaxBrain, grande parte da infraestrutura necessária já possui precedentes concretos.
+
+O que resta é precisamente o núcleo científico da GSNA:
+
+- Fast State Fabric;
+
+- State Packet;
+
+- routing aprendível;
+
+- direct graph transitions;
+
+- temporal commit;
+
+- frontier scheduling;
+
+- capacity scaling sob active compute limitado;
+
+- Core Scaling sob budget residente explícito;
+
+- interação 2D entre tamanho do RNC e tamanho do Capability Graph.
+
+É isso que a próxima implementação precisa provar.
